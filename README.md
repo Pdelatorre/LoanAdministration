@@ -1,0 +1,143 @@
+# Loan Administration System
+
+A Python-based loan administration system for calculating interest on floating-rate, interest-only loans with SOFR-based pricing.
+
+## Features
+
+- **Floating Rate Calculations**: Supports 1-month Term SOFR with configurable margin, floor, and ceiling
+- **Flexible Period Generation**: Handles non-standard interest periods with proper business day conventions
+- **Rate Management**: CSV-based storage for CME Term SOFR rates
+- **Multiple Export Formats**: Generate schedules in CSV and formatted text
+- **Command-Line Interface**: Easy-to-use CLI for all operations
+- **Actual/360 Day Count**: Industry-standard interest calculation methodology
+
+## Project Structure
+```
+LoanAdministration/
+├── business_days.py          # Holiday calendar and business day calculations
+├── loan_periods.py           # Interest period generation logic
+├── interest_calculations.py  # Rate and interest calculation functions
+├── sofr_rates.py            # SOFR rate data management
+├── loan.py                  # Main Loan class
+├── loan_export.py           # Export functionality (CSV, text)
+├── cli.py                   # Command-line interface
+├── data/
+│   └── sofr_rates.csv       # SOFR rate storage
+└── output/                  # Generated schedules
+```
+
+## Installation
+
+### Requirements
+- Python 3.8+
+- No external dependencies (uses only standard library)
+
+### Setup
+```bash
+# Clone the repository
+git clone <your-repo-url>
+cd LoanAdministration
+
+# Create necessary directories
+mkdir -p data output
+
+# The system is ready to use!
+```
+
+## Usage
+
+### Managing SOFR Rates
+
+List all available rates:
+```bash
+python cli.py list-rates
+```
+
+Add a new SOFR rate:
+```bash
+python cli.py add-rate 2025-01-30 4.55
+```
+
+### Creating a Loan and Generating Schedule
+```bash
+python cli.py create \
+  --loan-id LOAN-001 \
+  --borrower "ABC Company" \
+  --principal 1000000 \
+  --margin 2.5 \
+  --origination-date 2025-01-15 \
+  --maturity-date 2025-04-30 \
+  --floor 0.0 \
+  --ceiling 8.0
+```
+
+This will:
+1. Create the loan with specified terms
+2. Identify required SOFR reset dates
+3. Calculate interest for each period
+4. Export schedule to `output/LOAN-001_schedule.csv` and `.txt`
+
+### Example Output
+```
+✅ Loan created: LOAN-001
+   Borrower: ABC Company
+   Principal: $1,000,000.00
+   Periods: 4
+
+💰 Interest Schedule Generated:
+   Total Interest: $20,856.94
+   Exported to:
+   - output/LOAN-001_schedule.csv
+   - output/LOAN-001_schedule.txt
+```
+
+## Key Concepts
+
+### Interest Period Calculation
+- **First period**: Origination date to last business day of month
+- **Middle periods**: First day to last business day of each month
+- **Final period**: First day of maturity month to exact maturity date
+
+### SOFR Reset Dates
+SOFR rates are set **2 business days before** each interest period begins, following CME Term SOFR conventions.
+
+### Rate Calculation
+```
+Effective Rate = max(SOFR Floor, min(SOFR, SOFR Ceiling)) + Margin
+Interest = Principal × Effective Rate × (Days / 360)
+```
+
+## Technical Highlights
+
+- **Business Day Handling**: Accounts for weekends and US Bank holidays
+- **Date Arithmetic**: Handles edge cases (month-end, leap years, holiday adjustments)
+- **Modular Design**: Separation of concerns with clear module boundaries
+- **Data Persistence**: CSV-based storage with audit trails
+- **Error Handling**: Validates required SOFR rates before calculation
+
+## Use Cases
+
+This system was built to address real-world challenges in loan operations:
+
+1. **Manual Calculation Elimination**: Automates complex interest calculations that were previously done in Excel
+2. **Rate Compliance**: Ensures contractually specified CME SOFR rates are used
+3. **Audit Trail**: Maintains complete history of rates and calculations
+4. **Reporting**: Generates schedules for accounting, investor reporting, and compliance
+
+## Future Enhancements
+
+- [ ] **PIK (Payment-In-Kind) Interest** - Allow borrowers to capitalize interest instead of paying cash (v1.1 - in development)
+- [ ] Investor allocation module (pro-rata interest distribution)
+- [ ] Payment tracking and application
+- [ ] OID (Original Issue Discount) amortization
+- [ ] Journal entry generation for GL posting
+- [ ] Web-based interface
+- [ ] Database backend for production scale
+
+## Author
+
+Built by Phillip L Delatorre Jr. working on progressing into AI/ML and business automation.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

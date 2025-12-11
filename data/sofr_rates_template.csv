@@ -1,0 +1,5 @@
+reset_date,term_sofr_1m,source,date_added
+2025-01-01,0.04500,CME,2025-01-01
+```
+This shows the exact format with one example row.
+```

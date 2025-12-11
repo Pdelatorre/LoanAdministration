@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data files (keep template, ignore actual data)
+data/sofr_rates.csv
+!data/sofr_rates_template.csv
+!data/.gitkeep
+
+# Output files
+output/*.csv
+output/*.txt
+!output/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
