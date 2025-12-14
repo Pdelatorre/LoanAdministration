@@ -72,30 +72,3 @@ def add_sofr_rate(
         # Write the new row
         writer.writerow(new_row)
     print(f"Added rate for {reset_date.strftime('%Y-%m-%d')}: {rate:.5f}")
-
-
-if __name__ == "__main__":
-    from datetime import datetime
-    
-    print("Test 1: Load empty file")
-    rates = load_sofr_rates()
-    print(f"Loaded {len(rates)} rates\n")
-    
-    print("Test 2: Add first rate")
-    add_sofr_rate(datetime(2025, 1, 13), 0.04500)
-    
-    print("\nTest 3: Load again")
-    rates = load_sofr_rates()
-    print(f"Loaded {len(rates)} rates")
-    for date, rate in rates.items():
-        print(f"  {date.strftime('%Y-%m-%d')}: {rate:.5f}")
-    
-    print("\nTest 4: Add more rates")
-    add_sofr_rate(datetime(2025, 1, 30), 0.04600)
-    add_sofr_rate(datetime(2025, 2, 27), 0.04550)
-    
-    print("\nTest 5: Load final")
-    rates = load_sofr_rates()
-    print(f"Loaded {len(rates)} rates")
-    for date, rate in sorted(rates.items()):
-        print(f"  {date.strftime('%Y-%m-%d')}: {rate:.5f}")

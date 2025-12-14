@@ -19,7 +19,8 @@ def create_loan_command(args):
         maturity_date=datetime.strptime(args.maturity_date, '%Y-%m-%d'),
         sofr_floor=args.floor / 100 if args.floor else 0.0,
         sofr_ceiling=args.ceiling / 100 if args.ceiling else float('inf'),
-        period_end_convention=args.convention
+        period_end_convention=args.convention,
+        pik_rate=args.pik_rate / 100 if args.pik_rate else 0.0 # Convert from percentage
     )
     
     print(f"\n✅ Loan created: {loan.loan_id}")
@@ -27,6 +28,9 @@ def create_loan_command(args):
     print(f"   Principal: ${loan.principal:,.2f}")
     print(f"   Periods: {len(loan.periods)}")
     
+    if loan.pik_rate > 0:
+        print(f"   PIK Rate: {loan.pik_rate * 100:.2f}%")
+
     # Show required SOFR dates
     print(f"\n📅 Required SOFR reset dates:")
     required_dates = loan.get_required_sofr_dates()
@@ -43,7 +47,7 @@ def create_loan_command(args):
         return
     
     # Calculate and export schedule
-    schedule = loan.calculate_interest_schedule_from_file()
+    schedule = loan.calculate_schedule()
     
     loan_info = {
         'loan_id': loan.loan_id,
@@ -54,6 +58,9 @@ def create_loan_command(args):
         'maturity_date': args.maturity_date
     }
     
+    if loan.pik_rate > 0:
+            loan_info['pik_rate'] = args.pik_rate
+
     # Export files
     csv_file = f"output/{loan.loan_id}_schedule.csv"
     txt_file = f"output/{loan.loan_id}_schedule.txt"
@@ -62,13 +69,19 @@ def create_loan_command(args):
     export_schedule_to_text(schedule, txt_file, loan_info)
     
     # Display summary
-    total_interest = sum(entry['interest_amount'] for entry in schedule)
+    total_interest = sum(entry['interest_owed'] for entry in schedule)
     print(f"\n💰 Interest Schedule Generated:")
     print(f"   Total Interest: ${total_interest:,.2f}")
+    if loan.pik_rate > 0:
+        total_pik = sum(entry['pik_amount'] for entry in schedule)
+        total_cash = sum(entry['cash_payment'] for entry in schedule)
+        final_principal = schedule[-1]['principal_ending']
+        print(f"   Total PIK Capitalized: ${total_pik:,.2f}")
+        print(f"   Total Cash Payments: ${total_cash:,.2f}")
+        print(f"   Final Principal: ${final_principal:,.2f}")
     print(f"   Exported to:")
     print(f"   - {csv_file}")
     print(f"   - {txt_file}")
-
 
 def add_rate_command(args):
     """Add a SOFR rate."""
@@ -78,6 +91,17 @@ def add_rate_command(args):
     add_sofr_rate(rate_date, rate_value)
     print(f"✅ Added SOFR rate: {args.date} = {args.rate}%")
 
+def add_pik_command(args):
+    """Add a PIK Election."""
+    from pik_elections import add_pik_election
+    loan_id = args.loan_id
+    period_number = args.period_number
+    pik_elected = args.pik_elected.lower() == 'true' # Convert to boolean
+    
+    add_pik_election(loan_id, period_number, pik_elected)
+
+    pik_status = "PIK" if pik_elected else "Cash"
+    print(f"✅ Period {period_number} for Loan {loan_id} set to {pik_status}.")
 
 def list_rates_command(args):
     """List all SOFR rates."""
@@ -117,13 +141,22 @@ def main():
     create_parser.add_argument('--convention', default='last_business_day',
                               choices=['last_business_day', 'calendar_month_end'],
                               help='Period end convention')
+    create_parser.add_argument('--pik-rate', type=float, default=0.0, 
+                               help='PIK rate (in %), for PIK Loans (optional)')
     create_parser.set_defaults(func=create_loan_command)
-    
+
     # ADD RATE command
     rate_parser = subparsers.add_parser('add-rate', help='Add a SOFR rate')
     rate_parser.add_argument('date', help='Reset date (YYYY-MM-DD)')
     rate_parser.add_argument('rate', type=float, help='SOFR rate (in %)')
     rate_parser.set_defaults(func=add_rate_command)
+
+    # ADD PIK ELECTION command
+    pik_parser = subparsers.add_parser('add-pik', help='Add a PIK election')
+    pik_parser.add_argument('loan_id', help='Loan ID')
+    pik_parser.add_argument('period_number', type=int, help='Period number')
+    pik_parser.add_argument('pik_elected', help='PIK elected (True/False)')
+    pik_parser.set_defaults(func=add_pik_command)   
     
     # LIST RATES command
     list_parser = subparsers.add_parser('list-rates', help='List all SOFR rates')

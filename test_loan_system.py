@@ -139,6 +139,102 @@ class TestLoanPeriods(unittest.TestCase):
         self.assertEqual(periods[0]['end_date'], datetime(2025, 1, 31))
 
 
+class TestPIKCalculations(unittest.TestCase):
+    """Test PIK interest calculations."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.holidays = get_us_bank_holidays(2025)
+    
+    def test_pik_capitalization(self):
+        """Test that PIK amount is capitalized to principal."""
+        from loan import Loan
+        
+        loan = Loan(
+            loan_id="TEST-PIK",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 3, 31),
+            pik_rate=0.05
+        )
+        
+        sofr_rates = {
+            datetime(2025, 1, 13): 0.0450,
+            datetime(2025, 1, 30): 0.0450,
+            datetime(2025, 2, 27): 0.0450
+        }
+        
+        pik_elections = {1: True, 2: False, 3: True}
+        
+        schedule = loan.calculate_schedule(sofr_rates=sofr_rates, pik_elections=pik_elections)
+        
+        # Period 1: PIK elected, principal should grow
+        self.assertTrue(schedule[0]['pik_elected'])
+        self.assertGreater(schedule[0]['principal_ending'], 1000000)
+        
+        # Period 2: No PIK, principal should stay flat
+        self.assertFalse(schedule[1]['pik_elected'])
+        self.assertEqual(schedule[1]['principal_ending'], schedule[1]['principal_beginning'])
+    
+    def test_pik_reduces_cash_payment(self):
+        """Test that PIK amount reduces cash payment."""
+        from loan import Loan
+        
+        loan = Loan(
+            loan_id="TEST-PIK",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 2, 28),
+            pik_rate=0.05
+        )
+        
+        sofr_rates = {
+            datetime(2025, 1, 13): 0.0450,
+            datetime(2025, 1, 30): 0.0450
+        }
+        
+        # Compare PIK vs no PIK
+        pik_schedule = loan.calculate_schedule(sofr_rates=sofr_rates, pik_elections={1: True})
+        cash_schedule = loan.calculate_schedule(sofr_rates=sofr_rates, pik_elections={1: False})
+        
+        # PIK election should reduce cash payment
+        self.assertLess(pik_schedule[0]['cash_payment'], cash_schedule[0]['cash_payment'])
+        
+        # Interest owed should be the same
+        self.assertAlmostEqual(pik_schedule[0]['interest_owed'], cash_schedule[0]['interest_owed'], places=2)
+    
+    def test_no_pik_rate_means_all_cash(self):
+        """Test that loan with pik_rate=0 works like regular loan."""
+        from loan import Loan
+        
+        loan = Loan(
+            loan_id="TEST-NO-PIK",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 2, 28),
+            pik_rate=0.0  # No PIK
+        )
+        
+        sofr_rates = {
+            datetime(2025, 1, 13): 0.0450,
+            datetime(2025, 1, 30): 0.0450
+        }
+        
+        schedule = loan.calculate_schedule(sofr_rates=sofr_rates)
+        
+        # All periods should have zero PIK
+        for period in schedule:
+            self.assertEqual(period['pik_amount'], 0.0)
+            self.assertEqual(period['cash_payment'], period['interest_owed'])
+            self.assertEqual(period['principal_ending'], period['principal_beginning'])
+
+
 def run_tests():
     """Run all tests and print results."""
     # Create test suite
@@ -148,6 +244,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestBusinessDays))
     suite.addTests(loader.loadTestsFromTestCase(TestInterestCalculations))
     suite.addTests(loader.loadTestsFromTestCase(TestLoanPeriods))
+    suite.addTests(loader.loadTestsFromTestCase(TestPIKCalculations))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)
@@ -162,6 +259,8 @@ def run_tests():
     print("="*70)
     
     return result.wasSuccessful()
+
+
 
 
 if __name__ == '__main__':

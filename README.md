@@ -10,6 +10,7 @@ A Python-based loan administration system for calculating interest on floating-r
 - **Multiple Export Formats**: Generate schedules in CSV and formatted text
 - **Command-Line Interface**: Easy-to-use CLI for all operations
 - **Actual/360 Day Count**: Industry-standard interest calculation methodology
+- **PIK (Payment-In-Kind) Interest**: Support for capitalizing interest with configurable PIK rates
 
 ## Project Structure
 ```
@@ -17,13 +18,15 @@ LoanAdministration/
 ├── business_days.py          # Holiday calendar and business day calculations
 ├── loan_periods.py           # Interest period generation logic
 ├── interest_calculations.py  # Rate and interest calculation functions
-├── sofr_rates.py            # SOFR rate data management
-├── loan.py                  # Main Loan class
-├── loan_export.py           # Export functionality (CSV, text)
-├── cli.py                   # Command-line interface
+├── sofr_rates.py             # SOFR rate data management
+├── pik_elections.py          # PIK election management
+├── loan.py                   # Main Loan class
+├── loan_export.py            # Export functionality (CSV, text)
+├── cli.py                    # Command-line interface
 ├── data/
-│   └── sofr_rates.csv       # SOFR rate storage
-└── output/                  # Generated schedules
+│   └── sofr_rates.csv        # SOFR rate storage
+│   └── pik_elections.csv     # PIK election storage
+└── output/                   # Generated schedules
 ```
 
 ## Installation
@@ -59,6 +62,8 @@ python cli.py add-rate 2025-01-30 4.55
 ```
 
 ### Creating a Loan and Generating Schedule
+
+**Basic loan (interest-only, no PIK):**
 ```bash
 python cli.py create \
   --loan-id LOAN-001 \
@@ -71,13 +76,44 @@ python cli.py create \
   --ceiling 8.0
 ```
 
-This will:
+**PIK loan (with interest capitalization):**
+
+First, add PIK elections:
+```bash
+python cli.py add-pik LOAN-002 1 true   # Elect PIK for period 1
+python cli.py add-pik LOAN-002 2 false  # Cash payment for period 2
+```
+
+Then create the loan with PIK rate:
+```bash
+python cli.py create \
+  --loan-id LOAN-002 \
+  --borrower "XYZ Company" \
+  --principal 20000000 \
+  --margin 2.5 \
+  --pik-rate 5.0 \
+  --origination-date 2025-01-15 \
+  --maturity-date 2025-04-30
+```
+
+Both commands will:
 1. Create the loan with specified terms
 2. Identify required SOFR reset dates
-3. Calculate interest for each period
-4. Export schedule to `output/LOAN-001_schedule.csv` and `.txt`
+3. Calculate interest for each period (with PIK if applicable)
+4. Export schedule to `output/LOAN-ID_schedule.csv` and `.txt`
+
+### PIK (Payment-In-Kind) Mechanics
+
+When PIK is elected for a period:
+- **PIK Amount** = Principal × PIK Rate × (Days / 360)
+- **Cash Payment** = Interest Owed - PIK Amount  
+- **New Principal** = Old Principal + PIK Amount
+
+The capitalized PIK amount compounds in subsequent periods.
 
 ### Example Output
+
+**Regular Loan:**
 ```
 ✅ Loan created: LOAN-001
    Borrower: ABC Company
@@ -86,9 +122,29 @@ This will:
 
 💰 Interest Schedule Generated:
    Total Interest: $20,856.94
+   
    Exported to:
    - output/LOAN-001_schedule.csv
    - output/LOAN-001_schedule.txt
+```
+
+**PIK Loan:**
+```
+✅ Loan created: LOAN-002
+   Borrower: XYZ Company
+   Principal: $20,000,000.00
+   Periods: 4
+   PIK Rate: 5.00%
+
+💰 Interest Schedule Generated:
+   Total Interest Owed: $417,702.61
+   Total PIK Capitalized: $133,536.65
+   Total Cash Payments: $284,165.96
+   Final Principal Balance: $20,133,536.65
+   
+   Exported to:
+   - output/LOAN-002_schedule.csv
+   - output/LOAN-002_schedule.txt
 ```
 
 ## Key Concepts

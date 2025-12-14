@@ -4,14 +4,6 @@ from typing import List, Dict
 
 
 def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict = None) -> None:
-    """
-    Export interest schedule to CSV file.
-    
-    Args:
-        schedule: List of period dicts with interest calculations
-        filepath: Where to save the CSV
-        loan_info: Optional dict with loan details (loan_id, borrower, principal, etc.)
-    """
     with open(filepath, 'w', newline='') as file:
         # Define columns for export
         fieldnames = [
@@ -23,7 +15,12 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
             'sofr_reset_date',
             'sofr_rate',
             'effective_rate',
-            'interest_amount'
+            'interest_owed',
+            'principal_beginning',
+            'principal_ending',
+            'pik_elected',
+            'pik_amount',
+            'cash_payment'
         ]
         
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -52,7 +49,12 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
                 'sofr_reset_date': entry['sofr_reset_date'].strftime('%Y-%m-%d'),
                 'sofr_rate': f"{entry['sofr_rate']:.5f}",
                 'effective_rate': f"{entry['effective_rate']:.5f}",
-                'interest_amount': f"{entry['interest_amount']:.2f}"
+                'pik_elected': entry['pik_elected'],
+                'principal_beginning': f"{entry['principal_beginning']:.2f}",
+                'interest_owed': f"{entry['interest_owed']:.2f}",
+                'pik_amount': f"{entry['pik_amount']:.2f}",
+                'cash_payment': f"{entry['cash_payment']:.2f}",
+                'principal_ending': f"{entry['principal_ending']:.2f}"
             }
             writer.writerow(row)
     
@@ -60,14 +62,6 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
 
 
 def export_schedule_to_text(schedule: List[Dict], filepath: str, loan_info: Dict = None) -> None:
-    """
-    Export interest schedule to formatted text file.
-    
-    Args:
-        schedule: List of period dicts with interest calculations
-        filepath: Where to save the file
-        loan_info: Optional dict with loan details
-    """
     with open(filepath, 'w') as file:
         # Write loan info header if provided
         if loan_info:
@@ -80,7 +74,7 @@ def export_schedule_to_text(schedule: List[Dict], filepath: str, loan_info: Dict
         # Write schedule header
         header = (
             f"{'Period':<6} {'Start Date':<12} {'End Date':<12} {'Payment Date':<14} "
-            f"{'Days':<5} {'SOFR Effective Date':<12} {'SOFR Rate':<10} {'Effective Rate':<15} {'Interest Amount':<15}\n"
+            f"{'Days':<5} {'SOFR Effective Date':<20} {'SOFR Rate':<10} {'Effective Rate':<15} {'PIK Elected' :<15} {'Principal Beginning' :<20} {'Interest Amount':<15} {'PIK Amount' :<15} {'Cash Payment' :<15} {'Principal Ending' :<20}\n"
         )
         file.write(header)
         file.write("=" * len(header) + "\n")
@@ -93,10 +87,15 @@ def export_schedule_to_text(schedule: List[Dict], filepath: str, loan_info: Dict
                 f"{entry['end_date'].strftime('%Y-%m-%d'):<12} "
                 f"{entry['payment_due_date'].strftime('%Y-%m-%d'):<14} "
                 f"{entry['days']:<5} "
-                f"{entry['sofr_reset_date'].strftime('%Y-%m-%d'):<12} "
+                f"{entry['sofr_reset_date'].strftime('%Y-%m-%d'):<20} "
                 f"{entry['sofr_rate']*100:<10.5f} "
                 f"{entry['effective_rate']*100:<15.5f} "
-                f"${entry['interest_amount']:<15,.2f}\n"
+                f"{'Yes' if entry['pik_elected'] else 'No':<15} "
+                f"${entry['principal_beginning']:<20,.2f} "
+                f"${entry['interest_owed']:<15,.2f} "
+                f"${entry['pik_amount']:<15,.2f} "
+                f"${entry['cash_payment']:<15,.2f} "
+                f"${entry['principal_ending']:<20,.2f}\n"
             )
             file.write(line)
     

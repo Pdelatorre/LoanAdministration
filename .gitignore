@@ -18,7 +18,9 @@ ENV/
 
 # Data files (keep template, ignore actual data)
 data/sofr_rates.csv
+data/pik_elections.csv
 !data/sofr_rates_template.csv
+!data/pik_elections_template.csv
 !data/.gitkeep
 
 # Output files
