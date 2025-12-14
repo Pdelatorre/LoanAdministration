@@ -38,7 +38,7 @@ LoanAdministration/
 ### Setup
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/Pdelatorre/LoanAdministration
 cd LoanAdministration
 
 # Create necessary directories
@@ -182,7 +182,6 @@ This system was built to address real-world challenges in loan operations:
 
 ## Future Enhancements
 
-- [ ] **PIK (Payment-In-Kind) Interest** - Allow borrowers to capitalize interest instead of paying cash (v1.1 - in development)
 - [ ] Investor allocation module (pro-rata interest distribution)
 - [ ] Payment tracking and application
 - [ ] OID (Original Issue Discount) amortization
@@ -192,7 +191,7 @@ This system was built to address real-world challenges in loan operations:
 
 ## Author
 
-Built by Phillip L Delatorre Jr. working on progressing into AI/ML and business automation.
+Built by Phillip L Delatorre Jr. as part of exploring AI/ML and business automation.
 
 ## License
 
