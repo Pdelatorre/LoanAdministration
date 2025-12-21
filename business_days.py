@@ -38,6 +38,7 @@ def get_us_bank_holidays(year: int) -> List[datetime]:
     # base holidays
     holidays = [
         datetime(year, 1, 1),  # New Year's Day
+        datetime(year, 6, 19), # Juneteenth
         datetime(year, 7, 4),  # Independence Day
         datetime(year, 11, 11), # Veterans Day
         datetime(year, 12, 25)  # Christmas

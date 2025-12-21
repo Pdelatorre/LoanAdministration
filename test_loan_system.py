@@ -24,7 +24,7 @@ class TestBusinessDays(unittest.TestCase):
     def test_us_bank_holidays_count(self):
         """Test that we get the correct number of holidays."""
         # Should have 9 federal holidays
-        self.assertEqual(len(self.holidays_2025), 9)
+        self.assertEqual(len(self.holidays_2025), 10)
     
     def test_mlk_day_2025(self):
         """Test MLK Day is calculated correctly (3rd Monday of January)."""
