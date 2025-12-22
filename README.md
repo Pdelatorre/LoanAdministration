@@ -11,6 +11,7 @@ A Python-based loan administration system for calculating interest on floating-r
 - **Command-Line Interface**: Easy-to-use CLI for all operations
 - **Actual/360 Day Count**: Industry-standard interest calculation methodology
 - **PIK (Payment-In-Kind) Interest**: Support for capitalizing interest with configurable PIK rates
+- **Interest Prepayment Tracking**: Manages upfront interest prepayments with automatic application to future periods
 
 ## Project Structure
 ```
@@ -23,6 +24,7 @@ LoanAdministration/
 ├── loan.py                   # Main Loan class
 ├── loan_export.py            # Export functionality (CSV, text)
 ├── cli.py                    # Command-line interface
+├── payments.py               # Payment recording and tracking
 ├── data/
 │   └── sofr_rates.csv        # SOFR rate storage
 │   └── pik_elections.csv     # PIK election storage
@@ -111,6 +113,28 @@ When PIK is elected for a period:
 
 The capitalized PIK amount compounds in subsequent periods.
 
+### Interest Prepayment
+
+Many loans require interest to be prepaid at closing. The system tracks this balance and automatically applies it to future periods:
+```bash
+python cli.py create \
+  --loan-id LOAN-003 \
+  --borrower "ABC Company" \
+  --principal 50000000 \
+  --margin 2.5 \
+  --interest-prepayment 2000000 \
+  --origination-date 2025-01-15 \
+  --maturity-date 2027-12-31
+```
+
+**How it works:**
+- Prepaid balance is set at loan origination
+- Automatically applied to each period's interest until exhausted
+- PIK elections are blocked while prepaid balance exists
+- Cash payments only required once prepaid is exhausted
+- Full transparency with start/end balance tracking each period
+
+
 ### Example Output
 
 **Regular Loan:**
@@ -146,6 +170,21 @@ The capitalized PIK amount compounds in subsequent periods.
    - output/LOAN-002_schedule.csv
    - output/LOAN-002_schedule.txt
 ```
+
+**Loan with Interest Prepayment:**
+```
+✅ Loan created: LOAN-003
+   Borrower: ABC Company
+   Principal: $50,000,000.00
+   Periods: 36
+   Interest Prepayment: $2,000,000.00
+
+💰 Interest Schedule Generated:
+   Total Interest Owed: $10,450,000.00
+   Prepaid Coverage: First 14 periods fully covered
+   Cash Payments Start: Period 15
+```
+
 
 ## Key Concepts
 

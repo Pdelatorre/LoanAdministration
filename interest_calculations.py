@@ -54,21 +54,3 @@ def calculate_period_interest(
         return interest
     else:
         raise ValueError(f"Unsupported day count convention: {day_count_convention}")
-
-
-if __name__ == "__main__":
-    # Test 1: Standard 30-day period
-    interest1 = calculate_period_interest(1000000, 0.0700, 30)
-    print(f"Test 1: ${interest1:,.2f} (expected $5,833.33)")
-    
-    # Test 2: 17-day partial period (like your Jan 15-31 example)
-    interest2 = calculate_period_interest(1000000, 0.0700, 17)
-    print(f"Test 2: ${interest2:,.2f} (expected $3,305.56)")
-    
-    # Test 3: Full 31-day month
-    interest3 = calculate_period_interest(1000000, 0.0700, 31)
-    print(f"Test 3: ${interest3:,.2f} (expected $6,027.78)")
-    
-    # Test 4: Different rate and principal
-    interest4 = calculate_period_interest(2500000, 0.0825, 28)
-    print(f"Test 4: ${interest4:,.2f} (expected $16,041.67)")

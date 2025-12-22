@@ -1,3 +1,6 @@
 loan_id,period_number,pik_elected
 LOAN-001,1,True
 LOAN-001,2,False
+```
+This shows the exact format with example rows.
+```

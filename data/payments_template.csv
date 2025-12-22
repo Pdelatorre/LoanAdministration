@@ -1,0 +1,7 @@
+payment_id,loan_id,payment_date,amount,payment_type,period_number,notes
+LOAN-001-PAY-001,LOAN-001,2025-01-15,20000.00,interest,1,Test payment with prepayment
+LOAN-001-PAY-002,LOAN-001,2025-02-15,5833.33,interest,2,Period 2 payment
+LOAN-001-PAY-003,LOAN-001,2025-03-10,100000.00,principal_prepayment,,Early principal paydown
+```
+This shows the exact format with example rows.
+```

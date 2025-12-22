@@ -15,12 +15,15 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
             'sofr_reset_date',
             'sofr_rate',
             'effective_rate',
-            'interest_owed',
             'principal_beginning',
-            'principal_ending',
+            'interest_owed',
+            'prepaid_balance_start',
+            'prepaid_applied',
+            'prepaid_balance_end',
             'pik_elected',
             'pik_amount',
-            'cash_payment'
+            'cash_due',
+            'principal_ending',
         ]
         
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -52,8 +55,11 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
                 'pik_elected': entry['pik_elected'],
                 'principal_beginning': f"{entry['principal_beginning']:.2f}",
                 'interest_owed': f"{entry['interest_owed']:.2f}",
+                'prepaid_balance_start': f"{entry['prepaid_balance_start']:.2f}",
+                'prepaid_applied': f"{entry['prepaid_applied']:.2f}",
+                'prepaid_balance_end': f"{entry['prepaid_balance_end']:.2f}",
                 'pik_amount': f"{entry['pik_amount']:.2f}",
-                'cash_payment': f"{entry['cash_payment']:.2f}",
+                'cash_due': f"{entry['cash_due']:.2f}",
                 'principal_ending': f"{entry['principal_ending']:.2f}"
             }
             writer.writerow(row)
@@ -74,7 +80,7 @@ def export_schedule_to_text(schedule: List[Dict], filepath: str, loan_info: Dict
         # Write schedule header
         header = (
             f"{'Period':<6} {'Start Date':<12} {'End Date':<12} {'Payment Date':<14} "
-            f"{'Days':<5} {'SOFR Effective Date':<20} {'SOFR Rate':<10} {'Effective Rate':<15} {'PIK Elected' :<15} {'Principal Beginning' :<20} {'Interest Amount':<15} {'PIK Amount' :<15} {'Cash Payment' :<15} {'Principal Ending' :<20}\n"
+            f"{'Days':<5} {'SOFR Effective Date':<20} {'SOFR Rate':<10} {'Effective Rate':<15} {'PIK Elected' :<15} {'Principal Beginning' :<20} {'Interest Amount':<15} {'Prepaid Balance Start':<20} {'Prepaid Applied':<20} {'Prepaid Balance End':<20} {'PIK Amount' :<15} {'Cash Due' :<15} {'Principal Ending' :<20}\n"
         )
         file.write(header)
         file.write("=" * len(header) + "\n")
@@ -93,8 +99,11 @@ def export_schedule_to_text(schedule: List[Dict], filepath: str, loan_info: Dict
                 f"{'Yes' if entry['pik_elected'] else 'No':<15} "
                 f"${entry['principal_beginning']:<20,.2f} "
                 f"${entry['interest_owed']:<15,.2f} "
+                f"${entry['prepaid_balance_start']:<20,.2f} "
+                f"${entry['prepaid_applied']:<20,.2f} "
+                f"${entry['prepaid_balance_end']:<20,.2f} "
                 f"${entry['pik_amount']:<15,.2f} "
-                f"${entry['cash_payment']:<15,.2f} "
+                f"${entry['cash_due']:<15,.2f} "
                 f"${entry['principal_ending']:<20,.2f}\n"
             )
             file.write(line)

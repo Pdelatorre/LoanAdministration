@@ -19,7 +19,8 @@ class Loan:
         sofr_floor: float = 0.0,
         sofr_ceiling: float = float('inf'),
         period_end_convention: str = "last_business_day",
-        pik_rate: float = 0.0
+        pik_rate: float = 0.0,
+        interest_prepayment: float = 0.0
     ):
         """
         Initialize a loan.
@@ -34,6 +35,8 @@ class Loan:
             sofr_floor: Minimum SOFR rate (default 0%)
             sofr_ceiling: Maximum SOFR rate (default unlimited)
             period_end_convention: "last_business_day" or "calendar_month_end"
+            pik_rate: PIK rate (as decimal, e.g., 0.0250 for 2.50%)
+            interest_prepayment: Prepayment amount
         """
         self.loan_id = loan_id
         self.borrower = borrower
@@ -45,6 +48,7 @@ class Loan:
         self.sofr_ceiling = sofr_ceiling
         self.period_end_convention = period_end_convention
         self.pik_rate = pik_rate
+        self.interest_prepayment = interest_prepayment
         
         # Generate holidays once
         self.holidays = self._get_relevant_holidays()
@@ -134,6 +138,7 @@ class Loan:
 
         schedule = []
         current_principal = self.principal  # Track running principal balance
+        current_prepaid_balance = self.interest_prepayment  # Track running prepaid balance
         
         for period in self.periods:
             period_num = period['period_number']
@@ -168,8 +173,23 @@ class Loan:
                 period['days']
             )
             
+            # Apply prepayment if applicable
+            prepaid_balance_start = current_prepaid_balance
+
+            if current_prepaid_balance> 0:
+                prepaid_applied = min(current_prepaid_balance, interest_owed)
+                cash_due = interest_owed - prepaid_applied
+                prepaid_balance_end = current_prepaid_balance - prepaid_applied
+            else:
+                prepaid_applied = 0.0
+                cash_due = interest_owed
+                prepaid_balance_end = 0.0
+
+            current_prepaid_balance = prepaid_balance_end
+
+
             # Check if PIK is elected for this period
-            pik_elected = pik_elections.get(period_num, False)
+            pik_elected = pik_elections.get(period_num, False) and prepaid_balance_start == 0
             
             if pik_elected:
                 # Calculate PIK amount
@@ -186,13 +206,17 @@ class Loan:
                         f"Capping PIK at interest owed.")
                     pik_amount = interest_owed
                 
-                cash_payment = interest_owed - pik_amount
                 principal_ending = current_principal + pik_amount
             else:
                 # No PIK - full cash payment
                 pik_amount = 0.0
-                cash_payment = interest_owed
+                cash_due = interest_owed
                 principal_ending = current_principal
+
+                if pik_elections.get(period_num, False) and prepaid_balance_start == 0:
+                    print(f"Note Period {period_num} - PIK election ignored due to prepaid balance of {prepaid_balance_start:,.2f}.")
+            
+            cash_due = interest_owed - prepaid_applied - pik_amount
             
             # Build schedule entry
             schedule_entry = {
@@ -202,10 +226,13 @@ class Loan:
                 'sofr_rate': sofr_rate,
                 'effective_rate': effective_rate,
                 'interest_owed': interest_owed,
+                'prepaid_balance_start': prepaid_balance_start,
+                'prepaid_applied': prepaid_applied,
+                'prepaid_balance_end': prepaid_balance_end,
                 'pik_elected': pik_elected,
                 'pik_rate': self.pik_rate,
                 'pik_amount': pik_amount,
-                'cash_payment': cash_payment,
+                'cash_due': cash_due,
                 'principal_ending': principal_ending
             }
             
@@ -230,8 +257,6 @@ class Loan:
     )   -> List[Dict]:
         """Legacy method - use calculate_schedule() instead."""
         return self.calculate_schedule(sofr_filepath=sofr_filepath)
-    
-    
     
 
     def calculate_interest_schedule_with_pik(

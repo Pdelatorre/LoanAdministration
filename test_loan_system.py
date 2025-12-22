@@ -202,7 +202,7 @@ class TestPIKCalculations(unittest.TestCase):
         cash_schedule = loan.calculate_schedule(sofr_rates=sofr_rates, pik_elections={1: False})
         
         # PIK election should reduce cash payment
-        self.assertLess(pik_schedule[0]['cash_payment'], cash_schedule[0]['cash_payment'])
+        self.assertLess(pik_schedule[0]['cash_due'], cash_schedule[0]['cash_due'])
         
         # Interest owed should be the same
         self.assertAlmostEqual(pik_schedule[0]['interest_owed'], cash_schedule[0]['interest_owed'], places=2)
@@ -231,9 +231,129 @@ class TestPIKCalculations(unittest.TestCase):
         # All periods should have zero PIK
         for period in schedule:
             self.assertEqual(period['pik_amount'], 0.0)
-            self.assertEqual(period['cash_payment'], period['interest_owed'])
+            self.assertEqual(period['cash_due'], period['interest_owed'])
             self.assertEqual(period['principal_ending'], period['principal_beginning'])
 
+
+class TestInterestPrepayment(unittest.TestCase):
+    """Test interest prepayment functionality."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.holidays = get_us_bank_holidays(2025)
+        self.sofr_rates = {
+            datetime(2025, 1, 13): 0.0450,
+            datetime(2025, 1, 30): 0.0450,
+            datetime(2025, 2, 27): 0.0450,
+            datetime(2025, 3, 28): 0.0450
+        }
+    
+    def test_prepaid_applies_to_periods(self):
+        """Test that prepaid balance applies to future periods."""
+        from loan import Loan
+        
+        loan = Loan(
+            loan_id="TEST-PREPAID",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 4, 30),
+            interest_prepayment=100000.00
+        )
+        
+        schedule = loan.calculate_schedule(sofr_rates=self.sofr_rates)
+        
+        # Check first period
+        self.assertEqual(schedule[0]['prepaid_balance_start'], 100000.00)
+        self.assertGreater(schedule[0]['prepaid_applied'], 0)
+        self.assertEqual(schedule[0]['cash_due'], 0.00)
+        
+        # Prepaid should decrease each period
+        self.assertLess(schedule[1]['prepaid_balance_start'], 100000.00)
+        self.assertLess(schedule[1]['prepaid_balance_start'], schedule[0]['prepaid_balance_start'])
+    
+    def test_prepaid_exhaustion(self):
+        """Test partial coverage when prepaid runs out."""
+        from loan import Loan
+        
+        loan = Loan(
+            loan_id="TEST-EXHAUST",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 4, 30),
+            interest_prepayment=10000.00  # Small amount
+        )
+        
+        schedule = loan.calculate_schedule(sofr_rates=self.sofr_rates)
+        
+        # Find period where prepaid runs out
+        exhaust_period = None
+        for period in schedule:
+            if period['prepaid_balance_start'] > 0 and period['prepaid_balance_end'] == 0:
+                exhaust_period = period
+                break
+        
+        # Should have partial coverage in exhaustion period
+        self.assertIsNotNone(exhaust_period)
+        self.assertGreater(exhaust_period['prepaid_applied'], 0)
+        self.assertGreater(exhaust_period['cash_due'], 0)
+        self.assertEqual(exhaust_period['interest_owed'], 
+                        exhaust_period['prepaid_applied'] + exhaust_period['cash_due'])
+    
+    def test_prepaid_blocks_pik(self):
+        """Test that PIK is blocked when prepaid exists."""
+        from loan import Loan
+        
+        loan = Loan(
+            loan_id="TEST-PIK-BLOCK",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 4, 30),
+            interest_prepayment=20000.00,
+            pik_rate=0.03
+        )
+        
+        # Try to elect PIK on all periods
+        pik_elections = {1: True, 2: True, 3: True, 4: True}
+        schedule = loan.calculate_schedule(sofr_rates=self.sofr_rates, pik_elections=pik_elections)
+        
+        # PIK should be blocked in periods with prepaid
+        for period in schedule:
+            if period['prepaid_balance_start'] > 0:
+                self.assertFalse(period['pik_elected'], 
+                               f"Period {period['period_number']} should not allow PIK with prepaid balance")
+                self.assertEqual(period['pik_amount'], 0.00)
+    
+    def test_pik_allowed_after_prepaid_exhausted(self):
+        """Test that PIK is allowed once prepaid is exhausted."""
+        from loan import Loan
+        
+        loan = Loan(
+            loan_id="TEST-PIK-AFTER",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 4, 30),
+            interest_prepayment=5000.00,  # Very small
+            pik_rate=0.03
+        )
+        
+        pik_elections = {1: True, 2: True, 3: True, 4: True}
+        schedule = loan.calculate_schedule(sofr_rates=self.sofr_rates, pik_elections=pik_elections)
+        
+        # Find first period with no prepaid
+        for period in schedule:
+            if period['prepaid_balance_start'] == 0:
+                self.assertTrue(period['pik_elected'], 
+                              f"Period {period['period_number']} should allow PIK with no prepaid")
+                self.assertGreater(period['pik_amount'], 0)
+                break
 
 def run_tests():
     """Run all tests and print results."""
@@ -245,6 +365,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestInterestCalculations))
     suite.addTests(loader.loadTestsFromTestCase(TestLoanPeriods))
     suite.addTests(loader.loadTestsFromTestCase(TestPIKCalculations))
+    suite.addTests(loader.loadTestsFromTestCase(TestInterestPrepayment))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

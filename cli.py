@@ -20,7 +20,8 @@ def create_loan_command(args):
         sofr_floor=args.floor / 100 if args.floor else 0.0,
         sofr_ceiling=args.ceiling / 100 if args.ceiling else float('inf'),
         period_end_convention=args.convention,
-        pik_rate=args.pik_rate / 100 if args.pik_rate else 0.0 # Convert from percentage
+        pik_rate=args.pik_rate / 100 if args.pik_rate else 0.0, # Convert from percentage
+        interest_prepayment=args.interest_prepayment
     )
     
     print(f"\n✅ Loan created: {loan.loan_id}")
@@ -28,6 +29,9 @@ def create_loan_command(args):
     print(f"   Principal: ${loan.principal:,.2f}")
     print(f"   Periods: {len(loan.periods)}")
     
+    if loan.interest_prepayment > 0:
+        print(f"   Interest Prepayment: ${loan.interest_prepayment:,.2f}")
+
     if loan.pik_rate > 0:
         print(f"   PIK Rate: {loan.pik_rate * 100:.2f}%")
 
@@ -144,6 +148,7 @@ def main():
     create_parser.add_argument('--pik-rate', type=float, default=0.0, 
                                help='PIK rate (in %), for PIK Loans (optional)')
     create_parser.set_defaults(func=create_loan_command)
+    create_parser.add_argument('--interest-prepayment', type=float, default=0.0, help='Interest prepaid at loan close (in dollars,optional)')
 
     # ADD RATE command
     rate_parser = subparsers.add_parser('add-rate', help='Add a SOFR rate')
