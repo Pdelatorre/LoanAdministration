@@ -5,7 +5,7 @@ import argparse
 from datetime import datetime
 from loan import Loan
 from sofr_rates import add_sofr_rate, load_sofr_rates
-from loan_export import export_schedule_to_csv, export_schedule_to_text
+from loan_export import export_schedule_to_csv, export_schedule_to_text, export_segment_details_to_csv
 
 
 def create_loan_command(args):
@@ -68,9 +68,11 @@ def create_loan_command(args):
     # Export files
     csv_file = f"output/{loan.loan_id}_schedule.csv"
     txt_file = f"output/{loan.loan_id}_schedule.txt"
+    segment_file = f"output/{loan.loan_id}_segments.csv"
     
     export_schedule_to_csv(schedule, csv_file, loan_info)
     export_schedule_to_text(schedule, txt_file, loan_info)
+    export_segment_details_to_csv(schedule, segment_file, loan_info)
     
     # Display summary
     total_interest = sum(entry['interest_owed'] for entry in schedule)
@@ -78,7 +80,7 @@ def create_loan_command(args):
     print(f"   Total Interest: ${total_interest:,.2f}")
     if loan.pik_rate > 0:
         total_pik = sum(entry['pik_amount'] for entry in schedule)
-        total_cash = sum(entry['cash_payment'] for entry in schedule)
+        total_cash = sum(entry['cash_due'] for entry in schedule)
         final_principal = schedule[-1]['principal_ending']
         print(f"   Total PIK Capitalized: ${total_pik:,.2f}")
         print(f"   Total Cash Payments: ${total_cash:,.2f}")
@@ -124,6 +126,52 @@ def list_rates_command(args):
         print(f"{date.strftime('%Y-%m-%d'):<15} {rate*100:>6.3f}%")
 
 
+def add_payment_command(args):
+    """Record a payment via CLI."""
+    from payments import add_payment
+    from datetime import datetime
+    
+    payment_date = datetime.strptime(args.date, '%Y-%m-%d')
+    
+    add_payment(
+        loan_id=args.loan_id,
+        payment_date=payment_date,
+        amount=args.amount,
+        payment_type=args.type,
+        period_number=args.period,
+        notes=args.notes
+    )
+
+def list_payments_command(args):
+    """List all payments for a loan."""
+    from payments import load_payments
+    
+    payments = load_payments(args.loan_id)
+    
+    if not payments:
+        print(f"No payments found for loan {args.loan_id}")
+        return
+    
+    print(f"\n💰 Payment History for {args.loan_id}")
+    print(f"{'Payment ID':<25} {'Date':<12} {'Type':<22} {'Period':<8} {'Amount':>15}")
+    print("=" * 90)
+    
+    for p in payments:
+        period = str(p['period_number']) if p['period_number'] else 'N/A'
+        print(f"{p['payment_id']:<25} "
+              f"{p['payment_date'].strftime('%Y-%m-%d'):<12} "
+              f"{p['payment_type']:<22} "
+              f"{period:<8} "
+              f"${p['amount']:>14,.2f}")
+    
+    # Summary
+    total_interest = sum(p['amount'] for p in payments if p['payment_type'] == 'interest')
+    total_principal = sum(p['amount'] for p in payments if p['payment_type'] == 'principal_prepayment')
+    
+    print("=" * 90)
+    print(f"Total Interest Paid: ${total_interest:,.2f}")
+    print(f"Total Principal Prepaid: ${total_principal:,.2f}")
+
 def main():
     parser = argparse.ArgumentParser(
         description='Loan Administration System - Calculate floating-rate loan schedules',
@@ -166,7 +214,23 @@ def main():
     # LIST RATES command
     list_parser = subparsers.add_parser('list-rates', help='List all SOFR rates')
     list_parser.set_defaults(func=list_rates_command)
-    
+
+    # Add payment command
+    payment_parser = subparsers.add_parser('add-payment', help='Record a payment')
+    payment_parser.add_argument('--loan-id', required=True, help='Loan ID')
+    payment_parser.add_argument('--date', required=True, help='Payment date (YYYY-MM-DD)')
+    payment_parser.add_argument('--amount', type=float, required=True, help='Payment amount')
+    payment_parser.add_argument('--type', required=True, choices=['interest', 'principal_prepayment'], 
+                                help='Payment type')
+    payment_parser.add_argument('--period', type=int, help='Period number (for interest payments)')
+    payment_parser.add_argument('--notes', default='', help='Payment notes')
+    payment_parser.set_defaults(func=add_payment_command)
+
+    # List payments command
+    list_payments_parser = subparsers.add_parser('list-payments', help='List payments for a loan')
+    list_payments_parser.add_argument('loan_id', help='Loan ID')
+    list_payments_parser.set_defaults(func=list_payments_command)
+
     args = parser.parse_args()
     
     if args.command is None:

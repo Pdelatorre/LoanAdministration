@@ -6,12 +6,14 @@ A Python-based loan administration system for calculating interest on floating-r
 
 - **Floating Rate Calculations**: Supports 1-month Term SOFR with configurable margin, floor, and ceiling
 - **Flexible Period Generation**: Handles non-standard interest periods with proper business day conventions
+- **Interest Prepayment Tracking**: Manages upfront interest prepayments with automatic application to future periods
+- **Principal Prepayment Handling**: Mid-period principal prepayments with segmented interest calculation
+- **Payment Tracking**: Record and track interest payments and principal prepayments with status monitoring
 - **Rate Management**: CSV-based storage for CME Term SOFR rates
-- **Multiple Export Formats**: Generate schedules in CSV and formatted text
+- **Multiple Export Formats**: Generate schedules in CSV (main + segment details) and formatted text
 - **Command-Line Interface**: Easy-to-use CLI for all operations
 - **Actual/360 Day Count**: Industry-standard interest calculation methodology
 - **PIK (Payment-In-Kind) Interest**: Support for capitalizing interest with configurable PIK rates
-- **Interest Prepayment Tracking**: Manages upfront interest prepayments with automatic application to future periods
 
 ## Project Structure
 ```
@@ -135,6 +137,43 @@ python cli.py create \
 - Full transparency with start/end balance tracking each period
 
 
+### Payment Tracking and Principal Prepayments
+
+The system tracks payments and handles mid-period principal prepayments with automatic segmented interest calculation:
+
+**Record an interest payment:**
+```bash
+python cli.py add-payment \
+  --loan-id LOAN-001 \
+  --date 2025-01-31 \
+  --amount 5833.33 \
+  --type interest \
+  --period 1 \
+  --notes "Period 1 payment"
+```
+
+**Record a principal prepayment:**
+```bash
+python cli.py add-payment \
+  --loan-id LOAN-001 \
+  --date 2025-02-15 \
+  --amount 100000.00 \
+  --type principal_prepayment \
+  --notes "Early paydown"
+```
+
+**View payment history:**
+```bash
+python cli.py list-payments LOAN-001
+```
+
+**How principal prepayments work:**
+- Prepayment effective end-of-day on payment date
+- Period is split into segments with different principal balances
+- Interest calculated separately for each segment
+- All future periods recalculated with reduced principal
+- Segment details exported to separate CSV for transparency
+
 ### Example Output
 
 **Regular Loan:**
@@ -185,6 +224,23 @@ python cli.py create \
    Cash Payments Start: Period 15
 ```
 
+**Loan with Principal Prepayment:**
+```
+💰 Recording $100,000 principal prepayment on Feb 15...
+
+Period 2: Feb 1-28
+  Principal: $1,000,000 → $900,000
+  Interest: $5,228.75 (down from $5,483.33)
+  
+  Segments:
+    Feb 1-15 @ $1,000,000: $2,937.50
+    Feb 16-28 @ $900,000:  $2,291.25
+
+Generated files:
+- LOAN-001_schedule.csv (main schedule)
+- LOAN-001_segments.csv (segment details)
+- LOAN-001_schedule.txt (detailed report)
+```
 
 ## Key Concepts
 
@@ -221,9 +277,10 @@ This system was built to address real-world challenges in loan operations:
 
 ## Future Enhancements
 
+- [ ] Prepayment penalties and fees
 - [ ] Investor allocation module (pro-rata interest distribution)
-- [ ] Payment tracking and application
 - [ ] OID (Original Issue Discount) amortization
+- [ ] Delinquency reporting
 - [ ] Journal entry generation for GL posting
 - [ ] Web-based interface
 - [ ] Database backend for production scale

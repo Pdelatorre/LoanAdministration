@@ -355,6 +355,118 @@ class TestInterestPrepayment(unittest.TestCase):
                 self.assertGreater(period['pik_amount'], 0)
                 break
 
+
+class TestPrincipalPrepayments(unittest.TestCase):
+    """Test principal prepayment functionality."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.holidays = get_us_bank_holidays(2025)
+        self.sofr_rates = {
+            datetime(2025, 1, 13): 0.0450,
+            datetime(2025, 1, 30): 0.0455,
+            datetime(2025, 2, 27): 0.0455,
+            datetime(2025, 3, 28): 0.0465
+        }
+    
+    def test_mid_period_prepayment_creates_segments(self):
+        """Test that mid-period prepayment creates segment breakdown."""
+        from loan import Loan
+        from payments import add_payment
+        import os
+        
+        # Clean payments file
+        if os.path.exists('data/payments.csv'):
+            os.remove('data/payments.csv')
+        
+        loan = Loan(
+            loan_id="PREPAY-TEST",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 4, 30)
+        )
+        
+        # Add prepayment
+        add_payment("PREPAY-TEST", datetime(2025, 2, 15), 100000.00, "principal_prepayment")
+        
+        schedule = loan.calculate_schedule(sofr_rates=self.sofr_rates, include_payment_status=False)
+        
+        # Period 2 should have segments
+        period_2 = schedule[1]
+        self.assertEqual(len(period_2['segments']), 2, "Period 2 should have 2 segments")
+        self.assertEqual(period_2['principal_beginning'], 1000000)
+        self.assertEqual(period_2['principal_ending'], 900000)
+        
+        # Verify segments
+        self.assertEqual(period_2['segments'][0]['principal'], 1000000)
+        self.assertEqual(period_2['segments'][1]['principal'], 900000)
+        
+    def test_prepayment_reduces_future_interest(self):
+        """Test that prepayment reduces interest on future periods."""
+        from loan import Loan
+        from payments import add_payment
+        import os
+        
+        # Clean payments file
+        if os.path.exists('data/payments.csv'):
+            os.remove('data/payments.csv')
+        
+        loan = Loan(
+            loan_id="FUTURE-TEST",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 4, 30)
+        )
+        
+        # Get schedule without prepayment
+        schedule_before = loan.calculate_schedule(sofr_rates=self.sofr_rates, include_payment_status=False)
+        period_3_before = schedule_before[2]['interest_owed']
+        
+        # Add prepayment
+        add_payment("FUTURE-TEST", datetime(2025, 2, 15), 100000.00, "principal_prepayment")
+        
+        # Get schedule with prepayment
+        schedule_after = loan.calculate_schedule(sofr_rates=self.sofr_rates, include_payment_status=False)
+        period_3_after = schedule_after[2]['interest_owed']
+        
+        # Period 3 interest should be lower
+        self.assertLess(period_3_after, period_3_before, "Period 3 interest should be reduced after prepayment")
+        
+    def test_multiple_prepayments_in_period(self):
+        """Test handling of multiple prepayments in one period."""
+        from loan import Loan
+        from payments import add_payment
+        import os
+        
+        # Clean payments file
+        if os.path.exists('data/payments.csv'):
+            os.remove('data/payments.csv')
+        
+        loan = Loan(
+            loan_id="MULTI-PREPAY",
+            borrower="Test",
+            principal=1000000,
+            margin=0.025,
+            origination_date=datetime(2025, 1, 15),
+            maturity_date=datetime(2025, 4, 30)
+        )
+        
+        # Add two prepayments in Period 2
+        add_payment("MULTI-PREPAY", datetime(2025, 2, 10), 50000.00, "principal_prepayment")
+        add_payment("MULTI-PREPAY", datetime(2025, 2, 20), 30000.00, "principal_prepayment")
+        
+        schedule = loan.calculate_schedule(sofr_rates=self.sofr_rates, include_payment_status=False)
+        
+        # Period 2 should have 3 segments
+        period_2 = schedule[1]
+        self.assertEqual(len(period_2['segments']), 3, "Period 2 should have 3 segments with 2 prepayments")
+        self.assertEqual(period_2['principal_ending'], 920000, "Principal should be reduced by both prepayments")
+
+
 def run_tests():
     """Run all tests and print results."""
     # Create test suite
@@ -366,6 +478,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestLoanPeriods))
     suite.addTests(loader.loadTestsFromTestCase(TestPIKCalculations))
     suite.addTests(loader.loadTestsFromTestCase(TestInterestPrepayment))
+    suite.addTests(loader.loadTestsFromTestCase(TestPrincipalPrepayments))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

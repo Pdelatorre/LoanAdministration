@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Dict
 from business_days import get_us_bank_holidays, add_business_days
 from loan_periods import generate_interest_periods
-from interest_calculations import calculate_effective_rate, calculate_period_interest
+from interest_calculations import calculate_effective_rate, calculate_period_interest, calculate_segmented_interest
 
 
 class Loan:
@@ -99,7 +99,9 @@ class Loan:
         sofr_rates: Dict[datetime, float] = None,
         pik_elections: Dict[int, bool] = None,
         sofr_filepath: str = "data/sofr_rates.csv",
-        pik_filepath: str = "data/pik_elections.csv"
+        pik_filepath: str = "data/pik_elections.csv",
+        include_payment_status: bool = True,
+        payments_filepath: str = "data/payments.csv",
     ) -> List[Dict]:
         """
         Calculate complete loan schedule with optional PIK.
@@ -136,6 +138,10 @@ class Loan:
             # Not a PIK Loan, use standard schedule calculation
             pik_elections = {p['period_number']: False for p in self.periods}
 
+        from payments import load_payments
+        payments = load_payments(self.loan_id, payments_filepath)
+        prepayments = [p for p in payments if p['payment_type'] == 'principal_prepayment']
+
         schedule = []
         current_principal = self.principal  # Track running principal balance
         current_prepaid_balance = self.interest_prepayment  # Track running prepaid balance
@@ -166,58 +172,71 @@ class Loan:
                 self.sofr_ceiling
             )
             
-            # Calculate interest owed on current principal
-            interest_owed = calculate_period_interest(
-                current_principal,
-                effective_rate,
-                period['days']
-            )
-            
-            # Apply prepayment if applicable
+            # Check if there are prepayments in this period
+            period_prepayments = [p for p in prepayments 
+                                if period['start_date'] <= p['payment_date'] <= period['end_date']]
+
+            if period_prepayments:
+                # Use segmented calculation
+                interest_owed, principal_after_prepayment, segments = calculate_segmented_interest(
+                    period['start_date'],
+                    period['end_date'],
+                    current_principal,
+                    effective_rate,
+                    prepayments
+                )
+            else:
+                # Normal calculation (no prepayments)
+                interest_owed = calculate_period_interest(
+                    current_principal,
+                    effective_rate,
+                    period['days']
+                )
+                principal_after_prepayment = current_principal
+                segments = []
+
+            # Apply interest prepayment if applicable
             prepaid_balance_start = current_prepaid_balance
 
-            if current_prepaid_balance> 0:
+            if current_prepaid_balance > 0:
                 prepaid_applied = min(current_prepaid_balance, interest_owed)
-                cash_due = interest_owed - prepaid_applied
                 prepaid_balance_end = current_prepaid_balance - prepaid_applied
             else:
                 prepaid_applied = 0.0
-                cash_due = interest_owed
                 prepaid_balance_end = 0.0
 
             current_prepaid_balance = prepaid_balance_end
 
-
             # Check if PIK is elected for this period
             pik_elected = pik_elections.get(period_num, False) and prepaid_balance_start == 0
-            
+                
             if pik_elected:
                 # Calculate PIK amount
                 pik_amount = calculate_period_interest(
-                    current_principal,
+                    principal_after_prepayment,
                     self.pik_rate,
                     period['days']
                 )
-                
+                    
                 # Validate: PIK shouldn't exceed interest owed
                 if pik_amount > interest_owed:
                     print(f"Warning: Period {period_num} - PIK amount (${pik_amount:,.2f}) "
                         f"exceeds interest owed (${interest_owed:,.2f}). "
                         f"Capping PIK at interest owed.")
                     pik_amount = interest_owed
-                
-                principal_ending = current_principal + pik_amount
+                    
+                principal_ending = principal_after_prepayment + pik_amount
             else:
-                # No PIK - full cash payment
+                # No PIK
                 pik_amount = 0.0
-                cash_due = interest_owed
-                principal_ending = current_principal
+                principal_ending = principal_after_prepayment
 
-                if pik_elections.get(period_num, False) and prepaid_balance_start == 0:
-                    print(f"Note Period {period_num} - PIK election ignored due to prepaid balance of {prepaid_balance_start:,.2f}.")
-            
+                if pik_elections.get(period_num, False) and prepaid_balance_start > 0:
+                    print(f"Note: Period {period_num} - PIK election ignored due to prepaid balance of ${prepaid_balance_start:,.2f}")
+                
+            # Calculate final cash due
             cash_due = interest_owed - prepaid_applied - pik_amount
-            
+                
             # Build schedule entry
             schedule_entry = {
                 **period,  # Include all original period data
@@ -233,16 +252,54 @@ class Loan:
                 'pik_rate': self.pik_rate,
                 'pik_amount': pik_amount,
                 'cash_due': cash_due,
-                'principal_ending': principal_ending
+                'principal_ending': principal_ending,
+                'segments': segments,
+                'prepayments': period_prepayments
             }
-            
+                
             schedule.append(schedule_entry)
-            
+
             # Update principal for next period
             current_principal = principal_ending
         
-        return schedule
+        # Add payment status if requested
+        if include_payment_status:
+            for entry in schedule:
+                period_num = entry['period_number']
 
+                period_payments = [p for p in payments
+                                   if p['payment_type'] == 'interest' 
+                                   and p['period_number'] == period_num]
+
+                amount_paid = sum(p['amount'] for p in period_payments)
+
+                tolerance = 0.01
+
+                if amount_paid >= entry['cash_due'] - tolerance:
+                    payment_status = 'Paid'
+                elif amount_paid > tolerance:
+                    payment_status = 'Partially Paid'
+                else:
+                    payment_status = 'Unpaid'
+
+                payment_date = None
+                if period_payments:
+                    payment_dates = [p['payment_date'] for p in period_payments]
+                    payment_date = max(payment_dates)
+
+                days_past_due = 0
+                if payment_status in ['Unpaid', 'Partially Paid']:
+                    due_date = entry['payment_due_date']
+                    today = datetime.now()
+                    if today > due_date:
+                        days_past_due = (today - due_date).days
+                
+                entry['amount_paid'] = amount_paid
+                entry['payment_status'] = payment_status
+                entry['payment_date'] = payment_date
+                entry['days_past_due'] = max(0, days_past_due)
+
+        return schedule
 
 
     def calculate_interest_schedule(self, sofr_rates: Dict[datetime, float]) -> List[Dict]:

@@ -1,4 +1,5 @@
-
+from datetime import datetime, timedelta
+from typing import List, Dict
 
 # Calculate effective interest rate with floor and ceiling
 def calculate_effective_rate(
@@ -54,3 +55,91 @@ def calculate_period_interest(
         return interest
     else:
         raise ValueError(f"Unsupported day count convention: {day_count_convention}")
+
+
+def calculate_segmented_interest(
+    period_start: datetime,
+    period_end: datetime,
+    starting_principal: float,
+    effective_rate: float,
+    prepayments: List[Dict],
+) -> tuple:
+    """
+    Calculate interest for a period with mid-period principal prepayments.
+    
+    Args:
+        period_start: Period start date
+        period_end: Period end date
+        starting_principal: Principal at start of period
+        effective_rate: Interest rate for the period
+        prepayments: List of prepayment dicts with 'payment_date' and 'amount'
+    
+    Returns:
+        (total_interest, ending_principal)
+    """
+    # 1. Filter and sort prepayments in this period
+    period_prepayments = [p for p in prepayments 
+                        if period_start <= p['payment_date'] <= period_end]
+    period_prepayments.sort(key=lambda x: x['payment_date'])
+
+    # 2. Build segments
+    segments = []
+    segment_details = []
+    segment_num = 1
+    current_principal = starting_principal
+
+    if period_prepayments:
+        # First segment: period_start to first prepayment date
+        segments.append({
+            'start': period_start,
+            'end': period_prepayments[0]['payment_date'],
+            'principal': current_principal
+        })
+        current_principal -= period_prepayments[0]['amount']
+        
+        # Middle segments (if multiple prepayments)
+        for i in range(1, len(period_prepayments)):
+            segments.append({
+                'start': period_prepayments[i-1]['payment_date'] + timedelta(days=1),
+                'end': period_prepayments[i]['payment_date'],
+                'principal': current_principal
+            })
+            current_principal -= period_prepayments[i]['amount']
+        
+        # Last segment: last prepayment + 1 day to period_end
+        segments.append({
+            'start': period_prepayments[-1]['payment_date'] + timedelta(days=1),
+            'end': period_end,
+            'principal': current_principal
+        })
+    else:
+        # No prepayments - single segment
+        segments.append({
+            'start': period_start,
+            'end': period_end,
+            'principal': starting_principal
+        })
+
+    # 3. Calculate interest for each segment and sum
+    total_interest = 0
+    for segment in segments:
+        days = (segment['end'] - segment['start']).days + 1  # Include both start and end
+        segment_interest = calculate_period_interest(
+            segment['principal'],
+            effective_rate,
+            days
+        )
+        total_interest += segment_interest
+    
+        segment_details.append({
+            'segment_num': segment_num,
+            'start_date': segment['start'],
+            'end_date': segment['end'],
+            'days': days,
+            'principal': segment['principal'],
+            'interest': segment_interest
+        })
+        segment_num += 1
+
+    # 4. Return total interest and ending principal
+    return total_interest, current_principal, segment_details

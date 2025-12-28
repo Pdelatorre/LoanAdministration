@@ -81,16 +81,12 @@ def add_payment(
     existing_payments = load_payments(loan_id, filepath)
     
     if existing_payments:
-        payment_numbers = []
-        for payment in existing_payments:
-            pay_num = int(payment['payment_id'].split('-PAY-')[1])
-            payment_numbers.append(pay_num)
-        
+        payment_numbers = [int(p['payment_id'].split('-')[-1]) for p in existing_payments]
         next_num = max(payment_numbers) + 1
     else:
         next_num = 1
 
-    payment_id = f"{loan_id}-PAY-{next_num:03d}"
+    payment_id = f"PAY-{loan_id}-{next_num:03d}"
     
     # Prepare the row
     new_row = {
@@ -118,31 +114,3 @@ def add_payment(
     print(f"✅ Payment recorded: {loan_id} - ${amount:,.2f} on {payment_date.strftime('%Y-%m-%d')}")
 
 
-# Test the functions
-if __name__ == "__main__":
-    from datetime import datetime
-    
-    # Add second payment
-    add_payment(
-        loan_id="LOAN-001",
-        payment_date=datetime(2025, 2, 15),
-        amount=5833.33,
-        payment_type="interest",
-        period_number=2,
-        notes="Period 2 payment"
-    )
-    
-    # Add third payment
-    add_payment(
-        loan_id="LOAN-001",
-        payment_date=datetime(2025, 3, 10),
-        amount=100000.00,
-        payment_type="principal_prepayment",
-        notes="Early principal paydown"
-    )
-    
-    # Load and verify
-    payments = load_payments("LOAN-001")
-    print(f"\nLoaded {len(payments)} payments:")
-    for p in payments:
-        print(f"  {p['payment_id']}: ${p['amount']:,.2f} ({p['payment_type']}) - Period {p['period_number'] or 'N/A'}")
