@@ -6,6 +6,7 @@ from datetime import datetime
 from loan import Loan
 from sofr_rates import add_sofr_rate, load_sofr_rates
 from loan_export import export_schedule_to_csv, export_schedule_to_text, export_segment_details_to_csv
+import config
 
 
 def create_loan_command(args):
@@ -21,7 +22,8 @@ def create_loan_command(args):
         sofr_ceiling=args.ceiling / 100 if args.ceiling else float('inf'),
         period_end_convention=args.convention,
         pik_rate=args.pik_rate / 100 if args.pik_rate else 0.0, # Convert from percentage
-        interest_prepayment=args.interest_prepayment
+        interest_prepayment=args.interest_prepayment,
+        loan_name=args.loan_name
     )
     
     print(f"\n✅ Loan created: {loan.loan_id}")
@@ -172,6 +174,68 @@ def list_payments_command(args):
     print(f"Total Interest Paid: ${total_interest:,.2f}")
     print(f"Total Principal Prepaid: ${total_principal:,.2f}")
 
+
+def add_investor_command(args):
+    """Add investor via CLI."""
+    from investors import add_investor
+    from datetime import datetime
+    
+    effective_date = datetime.strptime(args.effective_date, '%Y-%m-%d')
+    
+    add_investor(
+        loan_id=args.loan_id,
+        investor_id=args.investor_id,
+        investor_name=args.investor_name,
+        ownership_pct=args.ownership_pct,
+        effective_date=effective_date
+    )
+
+
+def list_investors_command(args):
+    """List investors for a loan via CLI."""
+    from investors import load_investors, validate_ownership
+    from datetime import datetime
+    
+    target_date = datetime.strptime(args.date, '%Y-%m-%d') if args.date else datetime.now()
+    
+    # Validate ownership
+    result = validate_ownership(args.loan_id, target_date)
+    
+    print(f"\n👥 Investors for {args.loan_id} as of {target_date.strftime('%Y-%m-%d')}")
+    print(f"{'Investor ID':<15} {'Investor Name':<30} {'Ownership %':>12}")
+    print("=" * 60)
+    
+    for inv in result['investors']:
+        print(f"{inv['investor_id']:<15} {inv['investor_name']:<30} {inv['ownership_pct']:>11.2f}%")
+    
+    print("=" * 60)
+    print(f"Total Ownership: {result['total_pct']:.2f}%")
+    
+    if not result['valid']:
+        print(f"⚠️  WARNING: Ownership does not sum to 100%!")
+
+
+def generate_investor_reports_command(args):
+    """Generate investor reports via CLI."""
+    from loan import Loan
+    from investors import load_investors
+    from investor_allocation import allocate_period_to_investors
+    from investor_reports import generate_all_investor_statements_for_loan
+    from sofr_rates import load_sofr_rates
+    
+    # Load loan - need to reconstruct from CSV or database
+    # For now, this is a limitation - we need loan details
+    print("⚠️  Note: This command requires loan to be created in same session")
+    print("    Future enhancement: Store loan details in CSV for retrieval")
+    
+    # Placeholder - would need to load loan from storage
+    print(f"\n📊 To generate reports:")
+    print(f"   1. Create/load loan: LOAN-{args.loan_id}")
+    print(f"   2. Generate schedule")
+    print(f"   3. Call generate_all_investor_statements_for_loan()")
+    print(f"\n   See test script for full example.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Loan Administration System - Calculate floating-rate loan schedules',
@@ -197,6 +261,7 @@ def main():
                                help='PIK rate (in %), for PIK Loans (optional)')
     create_parser.set_defaults(func=create_loan_command)
     create_parser.add_argument('--interest-prepayment', type=float, default=0.0, help='Interest prepaid at loan close (in dollars,optional)')
+    create_parser.add_argument('--loan-name', help='Display name for loan (defaults to borrower name)')
 
     # ADD RATE command
     rate_parser = subparsers.add_parser('add-rate', help='Add a SOFR rate')
@@ -230,6 +295,29 @@ def main():
     list_payments_parser = subparsers.add_parser('list-payments', help='List payments for a loan')
     list_payments_parser.add_argument('loan_id', help='Loan ID')
     list_payments_parser.set_defaults(func=list_payments_command)
+
+    # Add investor
+    add_investor_parser = subparsers.add_parser('add-investor', help='Add investor to loan')
+    add_investor_parser.add_argument('--loan-id', required=True, help='Loan ID')
+    add_investor_parser.add_argument('--investor-id', required=True, help='Unique investor identifier')
+    add_investor_parser.add_argument('--investor-name', required=True, help='Investor name')
+    add_investor_parser.add_argument('--ownership-pct', type=float, required=True, help='Ownership percentage (e.g., 40.0 for 40%)')
+    add_investor_parser.add_argument('--effective-date', required=True, help='Effective date (YYYY-MM-DD)')
+    add_investor_parser.set_defaults(func=add_investor_command)
+
+    # List investors
+    list_investors_parser = subparsers.add_parser('list-investors', help='List investors for a loan')
+    list_investors_parser.add_argument('loan_id', help='Loan ID')
+    list_investors_parser.add_argument('--date', help='Show ownership as of date (YYYY-MM-DD, defaults to today)')
+    list_investors_parser.set_defaults(func=list_investors_command)
+
+    # Generate investor reports
+    generate_reports_parser = subparsers.add_parser('generate-investor-reports', help='Generate investor distribution statements')
+    generate_reports_parser.add_argument('--loan-id', required=True, help='Loan ID')
+    generate_reports_parser.add_argument('--period', type=int, required=True, help='Period number')
+    generate_reports_parser.add_argument('--company-name', default=config.COMPANY_NAME, help='Company name for header')
+    generate_reports_parser.set_defaults(func=generate_investor_reports_command)
+
 
     args = parser.parse_args()
     

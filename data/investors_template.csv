@@ -1,0 +1,5 @@
+loan_id,investor_id,investor_name,ownership_pct,effective_date
+LOAN-001,INV-A,Investor A LLC,40.00,2025-01-01
+```
+This shows the exact format with example rows.
+```

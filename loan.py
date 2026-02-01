@@ -20,7 +20,8 @@ class Loan:
         sofr_ceiling: float = float('inf'),
         period_end_convention: str = "last_business_day",
         pik_rate: float = 0.0,
-        interest_prepayment: float = 0.0
+        interest_prepayment: float = 0.0,
+        loan_name: str = None
     ):
         """
         Initialize a loan.
@@ -37,6 +38,7 @@ class Loan:
             period_end_convention: "last_business_day" or "calendar_month_end"
             pik_rate: PIK rate (as decimal, e.g., 0.0250 for 2.50%)
             interest_prepayment: Prepayment amount
+            loan_name: Display name for loan (defaults to borrower if not provided)
         """
         self.loan_id = loan_id
         self.borrower = borrower
@@ -49,6 +51,7 @@ class Loan:
         self.period_end_convention = period_end_convention
         self.pik_rate = pik_rate
         self.interest_prepayment = interest_prepayment
+        self.loan_name = loan_name if loan_name else borrower
         
         # Generate holidays once
         self.holidays = self._get_relevant_holidays()
@@ -243,6 +246,7 @@ class Loan:
                 'principal_beginning': current_principal,
                 'sofr_reset_date': sofr_reset_date,
                 'sofr_rate': sofr_rate,
+                'margin': self.margin,
                 'effective_rate': effective_rate,
                 'interest_owed': interest_owed,
                 'prepaid_balance_start': prepaid_balance_start,

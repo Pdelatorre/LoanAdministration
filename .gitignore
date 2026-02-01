@@ -16,19 +16,26 @@ ENV/
 *.swp
 *.swo
 
-# Data files (keep template, ignore actual data)
+# Data files (keep templates, ignore actual data)
 data/sofr_rates.csv
 data/pik_elections.csv
 data/payments.csv
+data/investors.csv
 !data/sofr_rates_template.csv
 !data/pik_elections_template.csv
 !data/payments_template.csv
+!data/investors_template.csv
 !data/.gitkeep
 
-# Output files
+# Output files - Root level
 output/*.csv
 output/*.txt
 !output/.gitkeep
+
+# Output files - Subdirectories (v1.4)
+output/investor_reports/*.txt
+output/investor_reports_pdf/*.pdf
+output/audit_reports/*.xlsx
 
 # OS
 .DS_Store
