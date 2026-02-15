@@ -1,0 +1,3 @@
+fee_id,loan_id,fee_date,fee_type,amount,cash_or_pik,period_number,description
+FEE-EXAMPLE-001,EXAMPLE-LOAN,2025-01-15,prepayment_fee,10000.00,cash,1,Early payoff penalty
+FEE-EXAMPLE-002,EXAMPLE-LOAN,2025-02-20,amendment_fee,5000.00,cash,2,Rate modification

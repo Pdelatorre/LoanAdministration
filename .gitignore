@@ -21,10 +21,12 @@ data/sofr_rates.csv
 data/pik_elections.csv
 data/payments.csv
 data/investors.csv
+data/fees.csv
 !data/sofr_rates_template.csv
 !data/pik_elections_template.csv
 !data/payments_template.csv
 !data/investors_template.csv
+!data/fees_template.csv
 !data/.gitkeep
 
 # Output files - Root level

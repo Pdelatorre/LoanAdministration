@@ -48,7 +48,7 @@ LoanAdministration/
 ├── requirements.txt               # Python dependencies
 ├── setup.sh                       # Automated setup script
 ├── README.md                      # This file
-│
+
 # Core Loan System
 ├── loan.py                        # Main Loan class with calculations
 ├── business_days.py               # Holiday calendar and business day calculations
@@ -58,27 +58,31 @@ LoanAdministration/
 ├── pik_elections.py               # PIK election management
 ├── payments.py                    # Payment recording and tracking
 ├── loan_export.py                 # Export functionality (CSV, text)
-│
+
 # Investor System (v1.4)
 ├── investors.py                   # Investor ownership tracking
 ├── investor_allocation.py         # Pro-rata allocation engine
 ├── investor_reports.py            # Text report generation
 ├── investor_reports_pdf.py        # PDF report generation
-│
+
+# Fee System (v1.5)
+├── fees.py                        # Fee storage and management
+├── fee_allocation.py              # Pro-rata fee allocation
+
 # Interface & Testing
 ├── cli.py                         # Command-line interface
 ├── test_loan_system.py            # Loan calculation tests
 ├── test_investor_system.py        # Investor allocation tests
 ├── test_config.py                 # Configuration integration tests
 ├── demo_investor_workflow.sh      # Complete workflow demonstration
-│
+
 # Data Storage
 ├── data/
 │   ├── sofr_rates.csv             # SOFR rate storage
 │   ├── pik_elections.csv          # PIK election storage
 │   ├── investors.csv              # Investor ownership records (auto-generated)
 │   └── payments.csv               # Payment history (auto-generated)
-│
+
 # Generated Reports
 └── output/
     ├── investor_reports/          # Text investor statements
@@ -265,7 +269,63 @@ python cli.py add-payment \
 python cli.py list-payments LOAN-001
 ```
 
-### 5. Generating Investor Reports
+### 5. Managing Fees
+
+**Add a fee:**
+```bash
+python cli.py add-fee \
+  --loan-id LOAN-001 \
+  --date 2025-02-15 \
+  --type prepayment_fee \
+  --amount 10000.00 \
+  --period 2 \
+  --description "Early payoff penalty - 2% of prepayment"
+```
+
+**Fee types available:**
+- `prepayment_fee` - Prepayment penalty
+- `prepayment_interest` - Interest on prepayment amount
+- `amendment_fee` - Fee for loan modifications
+- `exit_fee` - Fee at loan payoff
+- `waiver_fee` - Covenant waiver fee
+- `default_interest` - Default interest (after negotiation)
+- `other` - Other miscellaneous fees
+
+**Optional parameters:**
+- `--cash-or-pik` - Whether fee is cash or PIK (default: cash)
+- `--period` - Period number to assign fee to
+- `--description` - Description of the fee
+
+**View all fees:**
+```bash
+python cli.py list-fees LOAN-001
+```
+
+**Output:**
+```
+Fees for LOAN-001:
+====================================================================================================
+Date         | Type                      |         Amount | C/P  | Period | Description
+====================================================================================================
+2025-02-15   | Prepayment Fee            | $   10,000.00 | cash | P2     | Early payoff penalty
+2025-02-20   | Amendment Fee             | $    5,000.00 | cash | P2     | Rate modification
+====================================================================================================
+TOTAL        |                           | $   15,000.00
+```
+
+**PIK fees (capitalize into principal):**
+```bash
+python cli.py add-fee \
+  --loan-id LOAN-001 \
+  --date 2025-03-15 \
+  --type amendment_fee \
+  --amount 25000.00 \
+  --cash-or-pik pik \
+  --period 3 \
+  --description "Amendment fee - capitalized"
+```
+
+### 6. Generating Investor Reports
 
 **Create script for report generation** (`generate_reports.py`):
 ```python
@@ -299,20 +359,20 @@ pdf_files = generate_all_investor_pdfs(
     loan=loan,
     period_data=schedule[period_number - 1],
     allocation_data=allocation
-    # Uses config.COMPANY_NAME automatically
 )
 
 print(f"✅ Generated {len(pdf_files)} investor reports")
 ```
 
-**Run:**
-```bash
-python generate_reports.py
-```
+**Reports automatically include:**
+- Interest income allocation
+- Fee income (if any fees exist for the period)
+- Principal activity
+- Income summary
 
 **Output:** `output/investor_reports_pdf/LOAN-001_Period2_INV-A.pdf`
 
-### 6. Complete Monthly Workflow
+### 7. Complete Monthly Workflow
 
 **Run the demo workflow:**
 ```bash
@@ -323,7 +383,8 @@ This demonstrates:
 1. Creating a loan
 2. Adding investors
 3. Recording payments
-4. Generating investor distribution statements
+4. Adding fees
+5. Generating investor distribution statements
 
 ## How It Works
 
@@ -385,11 +446,10 @@ When PIK is elected for a period:
 
 ## Example Output
 
-### Investor Distribution Statement
+### Investor Loan Statement
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    [ABC Capital Management]                 │
-│               INVESTOR DISTRIBUTION STATEMENT               │
+│               INVESTOR LOAN STATEMENT                       │
 └─────────────────────────────────────────────────────────────┘
 
 Investor A LLC
@@ -401,33 +461,26 @@ Your Ownership: 40.00%
 ─────────────────────────────────────────────────────────────
 
 TOTAL LOAN ACTIVITY
-
-Effective    Beginning         Interest    Principal      Ending
-Date         Principal         Income      Activity       Principal
-─────────────────────────────────────────────────────────────────
-02/28/2025   $  5,000,000.00  $ 26,633.33                 $  4,500,000.00
-
-  Activity During Period:
-    02/20/2025 - Principal Prepayment      ($  500,000.00)
-
-─────────────────────────────────────────────────────────────
+...
 
 YOUR ALLOCATION (40.00%)
+...
 
-Effective    Beginning         Interest    Principal      Ending
-Date         Principal         Income      Activity       Principal
-─────────────────────────────────────────────────────────────────
-02/28/2025   $  2,000,000.00  $ 10,653.33                 $  1,800,000.00
+ADDITIONAL INCOME
 
-  Your Share of Activity:
-    02/20/2025 - Principal Prepayment      ($  200,000.00)
+Prepayment Fee (Feb 15):                      $   10,000.00
+Amendment Fee (Feb 20):                       $    4,000.00
+                                              ────────────────
+Total Additional Income:                      $   14,000.00
 
 ─────────────────────────────────────────────────────────────
 
-DISTRIBUTION SUMMARY
+INCOME SUMMARY
 
-Interest Income:                         $ 10,653.33
-Total Distribution:                      $ 10,653.33
+Interest Income:                                  $   10,653.33
+Additional Income:                              $   14,000.00
+                                              ────────────────
+Total Income Earned:                          $   24,653.33
 
 ─────────────────────────────────────────────────────────────
 ```
@@ -472,12 +525,17 @@ This system addresses real-world challenges in private credit fund operations:
 
 ## Roadmap
 
-### v1.5 (Next Release)
+### ✅ v1.5 (Current Release)
+- [x] Fee tracking and allocation (prepayment, amendment, exit, waiver, default interest)
+- [x] Point-in-time fee allocation to investors
+- [x] Default interest calculator for negotiations
+- [x] Fee reporting in investor statements and audit reports
+
+### v1.6 (Next Release)
 - [ ] Automated PDF generation via CLI
-- [ ] Excel audit reports with multiple tabs
-- [ ] Amendment fee tracking
-- [ ] Default interest calculation
+- [ ] PIK fee capitalization
 - [ ] Email distribution integration
+- [ ] Distribution notices (separate from loan admin memos)
 
 ### Future Enhancements
 - [ ] Prepayment penalties and make-whole calculations
@@ -491,6 +549,7 @@ This system addresses real-world challenges in private credit fund operations:
 
 ## Version History
 
+- **v1.5** (Feb 2026): Fee management system
 - **v1.4** (Jan 2026): Investor management, allocation engine, PDF reports
 - **v1.3** (Jan 2026): Payment tracking, principal prepayments
 - **v1.2** (Jan 2026): Interest prepayment handling

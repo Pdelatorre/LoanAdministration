@@ -236,45 +236,65 @@ def generate_investor_statement_pdf(
     elements.append(investor_table)
     elements.append(Spacer(1, 0.2*inch))
     
-    # Additional income (only if > 0)
-    amendment_fees = 0.00
-    default_interest = 0.00
-    total_additional = amendment_fees + default_interest
-    
-    if total_additional > 0:
-        elements.append(Paragraph("ADDITIONAL INCOME", heading_style))
+    # ADDITIONAL INCOME - Dynamic fee loading
+    from fee_allocation import calculate_investor_fee_totals
+
+    try:
+        investor_fees = calculate_investor_fee_totals(
+            loan_id, 
+            period_data['period_number'], 
+            investor_id
+        )
         
-        additional_data = [
-            ['Amendment Fees:', f"${amendment_fees:,.2f}"],
-            ['Default Interest:', f"${default_interest:,.2f}"],
-            ['Total Additional Income:', f"${total_additional:,.2f}"]
-        ]
-        
-        additional_table = Table(additional_data, colWidths=[4.5*inch, 2*inch])
-        additional_table.setStyle(TableStyle([
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-            ('LINEABOVE', (0, -1), (-1, -1), 2, colors.HexColor('#333333')),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        
-        elements.append(additional_table)
-        elements.append(Spacer(1, 0.2*inch))
+        if investor_fees['total_fees'] > 0:
+            elements.append(Paragraph("ADDITIONAL INCOME", heading_style))
+            
+            fee_data = []
+            
+            # Add each fee type with date
+            for detail in investor_fees['fee_details']:
+                fee_label = f"{detail['display_name']} ({detail['fee_date'].strftime('%b %d')}):"
+                fee_data.append([fee_label, f"${detail['investor_share']:,.2f}"])
+            
+            # Total additional income
+            fee_data.append(['Total Additional Income:', f"${investor_fees['total_fees']:,.2f}"])
+            
+            fee_table = Table(fee_data, colWidths=[4.5*inch, 2*inch])
+            fee_table.setStyle(TableStyle([
+                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('LINEABOVE', (0, -1), (-1, -1), 2, colors.HexColor('#333333')),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('TOPPADDING', (0, 0), (-1, -1), 4),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ]))
+            
+            elements.append(fee_table)
+            elements.append(Spacer(1, 0.2*inch))
+            
+            # Store for distribution summary
+            total_additional = investor_fees['total_fees']
+        else:
+            total_additional = 0.00
+    except:
+        # No fees for this period or fee system not available
+        total_additional = 0.00
     
-    # Distribution Summary
-    elements.append(Paragraph("SUMMARY", heading_style))
-    
+    # INCOME SUMMARY
+    elements.append(Paragraph("INCOME SUMMARY", heading_style))
+
     summary_data = [
         ['Interest Income:', f"${investor['interest']:,.2f}"]
     ]
-    
+
+    # Add additional income if exists
     if total_additional > 0:
         summary_data.append(['Additional Income:', f"${total_additional:,.2f}"])
-    
-    summary_data.append(['Total Distribution:', f"${investor['interest'] + total_additional:,.2f}"])
-    
+
+    # Total income earned
+    total_income = investor['interest'] + total_additional
+    summary_data.append(['Total Income Earned:', f"${total_income:,.2f}"])
+
     summary_table = Table(summary_data, colWidths=[4.5*inch, 2*inch])
     summary_table.setStyle(TableStyle([
         ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
@@ -284,12 +304,12 @@ def generate_investor_statement_pdf(
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
     ]))
-    
+
     elements.append(summary_table)
-    
+
     # Build PDF
     doc.build(elements)
-    
+
     return output_path
 
 

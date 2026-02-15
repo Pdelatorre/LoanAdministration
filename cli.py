@@ -236,6 +236,49 @@ def generate_investor_reports_command(args):
     print(f"\n   See test script for full example.")
 
 
+def add_fee_command(args):
+    """Add a fee to a loan."""
+    from fees import add_fee
+    from datetime import datetime
+    
+    fee_date = datetime.strptime(args.date, '%Y-%m-%d')
+    add_fee(
+        loan_id=args.loan_id,
+        fee_date=fee_date,
+        fee_type=args.type,
+        amount=args.amount,
+        cash_or_pik=args.cash_or_pik,
+        period_number=args.period,
+        description=args.description
+    )
+
+
+def list_fees_command(args):
+    """List all fees for a loan."""
+    from fees import load_fees, get_fee_display_name
+    
+    fees = load_fees(args.loan_id)
+    
+    if not fees:
+        print(f"\nNo fees found for {args.loan_id}")
+    else:
+        print(f"\nFees for {args.loan_id}:")
+        print("=" * 100)
+        print(f"{'Date':<12} | {'Type':<25} | {'Amount':>14} | {'C/P':<4} | {'Period':<6} | {'Description'}")
+        print("=" * 100)
+        for fee in fees:
+            period_str = f"P{fee['period_number']}" if fee['period_number'] else "N/A"
+            print(f"{fee['fee_date'].strftime('%Y-%m-%d'):<12} | "
+                  f"{get_fee_display_name(fee['fee_type']):<25} | "
+                  f"${fee['amount']:>12,.2f} | "
+                  f"{fee['cash_or_pik']:>4} | "
+                  f"{period_str:<6} | "
+                  f"{fee['description']}")
+        print("=" * 100)
+        total = sum(f['amount'] for f in fees)
+        print(f"{'TOTAL':<12} | {'':<25} | ${total:>12,.2f}")
+        print()
+
 def main():
     parser = argparse.ArgumentParser(
         description='Loan Administration System - Calculate floating-rate loan schedules',
@@ -318,6 +361,26 @@ def main():
     generate_reports_parser.add_argument('--company-name', default=config.COMPANY_NAME, help='Company name for header')
     generate_reports_parser.set_defaults(func=generate_investor_reports_command)
 
+    # Add fee command
+    add_fee_parser = subparsers.add_parser('add-fee', help='Add a fee to a loan')
+    add_fee_parser.add_argument('--loan-id', required=True, help='Loan ID')
+    add_fee_parser.add_argument('--date', required=True, help='Fee date (YYYY-MM-DD)')
+    add_fee_parser.add_argument('--type', required=True, 
+                            choices=['prepayment_fee', 'prepayment_interest', 
+                                    'amendment_fee', 'exit_fee', 'waiver_fee',
+                                    'default_interest', 'other'],
+                            help='Type of fee')
+    add_fee_parser.add_argument('--amount', required=True, type=float, help='Fee amount')
+    add_fee_parser.add_argument('--cash-or-pik', default='cash', choices=['cash', 'pik'],
+                            help='Cash or PIK fee (default: cash)')
+    add_fee_parser.add_argument('--period', type=int, help='Period number')
+    add_fee_parser.add_argument('--description', default='', help='Fee description')
+    add_fee_parser.set_defaults(func=add_fee_command)  
+
+    # List fees command
+    list_fees_parser = subparsers.add_parser('list-fees', help='List all fees for a loan')
+    list_fees_parser.add_argument('loan_id', help='Loan ID')
+    list_fees_parser.set_defaults(func=list_fees_command)  
 
     args = parser.parse_args()
     

@@ -44,20 +44,23 @@ def generate_audit_report(
     
     # Tab 1: Loan Summary
     _create_loan_summary_tab(wb, loan, schedule)
-    
+
     # Tab 2: Interest Period Detail
     _create_period_detail_tab(wb, schedule)
-    
+
     # Tab 3: Investor Allocations
     _create_investor_allocations_tab(wb, loan_id, schedule)
-    
+
     # Tab 4: Payment Ledger
     _create_payment_ledger_tab(wb, loan_id)
-    
-    # Tab 5: Ownership History
+
+    # Tab 5: Fee Income
+    _create_fee_income_tab(wb, loan_id)
+
+    # Tab 6: Ownership History
     _create_ownership_history_tab(wb, loan_id)
-    
-    # Tab 6: Reconciliation
+
+    # Tab 7: Reconciliation Checks
     _create_reconciliation_tab(wb, loan_id, schedule)
     
     # Save workbook
@@ -332,8 +335,109 @@ def _create_reconciliation_tab(wb, loan_id, schedule):
         except:
             pass
     
+    # Check 2: Fee allocations sum to period totals
+    from fees import get_fees_for_period, get_fee_display_name
+    from fee_allocation import allocate_fee_to_investors
+    
+    row += 2
+    ws[f'A{row}'] = "Check 2: Fee Allocations = Fee Totals"
+    ws[f'A{row}'].font = Font(bold=True)
+    row += 1
+    
+    ws[f'A{row}'] = "Period/Fee"
+    ws[f'B{row}'] = "Total Fee"
+    ws[f'C{row}'] = "Allocated"
+    ws[f'D{row}'] = "Match"
+    row += 1
+    
+    for period in schedule:
+        try:
+            period_fees = get_fees_for_period(loan_id, period['period_number'])
+            
+            for fee in period_fees:
+                fee_allocation = allocate_fee_to_investors(
+                    loan_id=loan_id,
+                    fee_date=fee['fee_date'],
+                    fee_amount=fee['amount'],
+                    fee_type=fee['fee_type']
+                )
+                
+                total_allocated = sum(inv['fee_share'] for inv in fee_allocation['investor_allocations'])
+                match = abs(total_allocated - fee['amount']) < 0.01
+                
+                ws[f'A{row}'] = f"P{period['period_number']} - {get_fee_display_name(fee['fee_type'])}"
+                ws[f'B{row}'] = fee['amount']
+                ws[f'C{row}'] = total_allocated
+                ws[f'D{row}'] = "✓" if match else "✗"
+                ws[f'D{row}'].font = Font(color="00FF00" if match else "FF0000", bold=True)
+                
+                # Format currency
+                ws[f'B{row}'].number_format = '$#,##0.00'
+                ws[f'C{row}'].number_format = '$#,##0.00'
+                
+                row += 1
+        except:
+            pass
+    
+    # If no fees found
+    if row == 3 + 2:
+        ws[f'A{row}'] = "No fees to reconcile"
+
+
     # Column widths
     ws.column_dimensions['A'].width = 30
     ws.column_dimensions['B'].width = 20
     ws.column_dimensions['C'].width = 20
     ws.column_dimensions['D'].width = 10
+
+def _create_fee_income_tab(wb, loan_id):
+    """Create Fee Income tab."""
+    from fees import load_fees, get_fee_display_name
+    
+    ws = wb.create_sheet("Fee Income")
+    
+    # Headers
+    headers = [
+        "Fee Date", "Period", "Fee Type", "Amount", "Cash/PIK", "Description"
+    ]
+    
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center")
+    
+    # Load fees
+    fees = load_fees(loan_id)
+    
+    if not fees:
+        # No fees - add a note
+        ws.cell(row=2, column=1, value="No fees recorded for this loan")
+        ws.merge_cells('A2:F2')
+    else:
+        # Data rows
+        for row, fee in enumerate(fees, 2):
+            ws.cell(row=row, column=1, value=fee['fee_date'].strftime('%Y-%m-%d'))
+            ws.cell(row=row, column=2, value=fee['period_number'] if fee['period_number'] else 'N/A')
+            ws.cell(row=row, column=3, value=get_fee_display_name(fee['fee_type']))
+            ws.cell(row=row, column=4, value=fee['amount'])
+            ws.cell(row=row, column=5, value=fee['cash_or_pik'].upper())
+            ws.cell(row=row, column=6, value=fee['description'])
+            
+            # Format currency
+            ws.cell(row=row, column=4).number_format = '$#,##0.00'
+        
+        # Add total row
+        total_row = len(fees) + 2
+        ws.cell(row=total_row, column=3, value="TOTAL:")
+        ws.cell(row=total_row, column=3).font = Font(bold=True)
+        ws.cell(row=total_row, column=4, value=sum(f['amount'] for f in fees))
+        ws.cell(row=total_row, column=4).number_format = '$#,##0.00'
+        ws.cell(row=total_row, column=4).font = Font(bold=True)
+    
+    # Auto-width columns
+    for col in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 18
+    
+    # Description column wider
+    ws.column_dimensions['F'].width = 40

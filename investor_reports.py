@@ -105,38 +105,50 @@ Date         Principal         Income      Activity       Principal
                 investor_pp = investor['principal_prepayment']
                 report += f"    {pp_date} - Principal Prepayment      (${ investor_pp:>12,.2f})\n"
     
-    # Additional income section (only show if fees exist)
-    amendment_fees = 0.00
-    default_interest = 0.00
+    # ADDITIONAL INCOME section (only show if fees exist)
+    from fee_allocation import calculate_investor_fee_totals
     
-    total_additional = amendment_fees + default_interest
-    
-    if total_additional > 0:
-        report += f"""
+    try:
+        investor_fees = calculate_investor_fee_totals(
+            loan_id, 
+            period_data['period_number'], 
+            investor_id
+        )
+        
+        if investor_fees['total_fees'] > 0:
+            report += f"""
 ─────────────────────────────────────────────────────────────
 
 ADDITIONAL INCOME
-
-Amendment Fees:                          ${amendment_fees:>10,.2f}
-Default Interest:                        ${default_interest:>10,.2f}
-                                    ─────────────
-Total Additional Income:                 ${total_additional:>10,.2f}
 """
+            for detail in investor_fees['fee_details']:
+                fee_label = f"{detail['display_name']} ({detail['fee_date'].strftime('%b %d')}):"
+                report += f"\n{fee_label:45} ${detail['investor_share']:>12,.2f}"
+            
+            report += f"\n{'':<45} {'─' * 16}"
+            report += f"\nTotal Additional Income:{'':<21} ${investor_fees['total_fees']:>12,.2f}\n"
+            
+            total_additional = investor_fees['total_fees']
+        else:
+            total_additional = 0.00
+    except:
+        total_additional = 0.00
     
-    # LOAN summary
+    # INCOME SUMMARY
     report += f"""
 ─────────────────────────────────────────────────────────────
 
-LOAN SUMMARY
+INCOME SUMMARY
 
-Interest Income:                         ${investor['interest']:>10,.2f}
+Interest Income:{'':<33} ${investor['interest']:>12,.2f}
 """
     
     if total_additional > 0:
-        report += f"Additional Income:                       ${total_additional:>10,.2f}\n"
-        report += f"                                    ─────────────\n"
+        report += f"Additional Income:{'':<29} ${total_additional:>12,.2f}\n"
+        report += f"{'':<45} {'─' * 16}\n"
     
-    report += f"Total Income:                                ${investor['interest'] + total_additional:>10,.2f}\n"
+    total_income = investor['interest'] + total_additional
+    report += f"Total Income Earned:{'':<25} ${total_income:>12,.2f}\n"
     report += "\n─────────────────────────────────────────────────────────────\n"
     
     return report
