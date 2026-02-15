@@ -28,6 +28,7 @@ def load_investors(loan_id: str, filepath: str = "data/investors.csv") -> List[D
                         'loan_id': row['loan_id'],
                         'investor_id': row['investor_id'],
                         'investor_name': row['investor_name'],
+                        'investor_short_name': row.get('investor_short_name', row['investor_id']),
                         'ownership_pct': float(row['ownership_pct']),
                         'effective_date': datetime.strptime(row['effective_date'], '%Y-%m-%d')
                     })
@@ -164,6 +165,7 @@ def _get_investors_at_date(all_investors: List[Dict], target_date: datetime) -> 
         {
             'investor_id': inv['investor_id'],
             'investor_name': inv['investor_name'],
+            'investor_short_name': inv['investor_short_name'],
             'ownership_pct': inv['ownership_pct']
         }
         for inv in investor_groups.values()
@@ -174,6 +176,7 @@ def add_investor(
     loan_id: str,
     investor_id: str,
     investor_name: str,
+    investor_short_name: str,
     ownership_pct: float,
     effective_date: datetime,
     filepath: str = "data/investors.csv"
@@ -196,7 +199,7 @@ def add_investor(
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(['loan_id', 'investor_id', 'investor_name', 'ownership_pct', 'effective_date'])
+            writer.writerow(['loan_id', 'investor_id', 'investor_name', 'investor_short_name', 'ownership_pct', 'effective_date'])
     
     # Append new record
     with open(filepath, 'a', newline='') as file:
@@ -205,6 +208,7 @@ def add_investor(
             loan_id,
             investor_id,
             investor_name,
+            investor_short_name,
             f"{ownership_pct:.2f}",
             effective_date.strftime('%Y-%m-%d')
         ])

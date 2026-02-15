@@ -186,6 +186,7 @@ def add_investor_command(args):
         loan_id=args.loan_id,
         investor_id=args.investor_id,
         investor_name=args.investor_name,
+        investor_short_name=args.investor_short_name,
         ownership_pct=args.ownership_pct,
         effective_date=effective_date
     )
@@ -344,6 +345,7 @@ def main():
     add_investor_parser.add_argument('--loan-id', required=True, help='Loan ID')
     add_investor_parser.add_argument('--investor-id', required=True, help='Unique investor identifier')
     add_investor_parser.add_argument('--investor-name', required=True, help='Investor name')
+    add_investor_parser.add_argument('--investor-short-name', required=True, help='Short name for investor (for reports)')
     add_investor_parser.add_argument('--ownership-pct', type=float, required=True, help='Ownership percentage (e.g., 40.0 for 40%)')
     add_investor_parser.add_argument('--effective-date', required=True, help='Effective date (YYYY-MM-DD)')
     add_investor_parser.set_defaults(func=add_investor_command)

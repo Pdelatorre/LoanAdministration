@@ -65,7 +65,7 @@ def generate_audit_report(
     
     # Save workbook
     timestamp = datetime.now().strftime('%Y%m%d')
-    filename = f"{loan_id}_Audit_Report_{timestamp}.xlsx"
+    filename = f"{loan.loan_name}_Audit_Report_{timestamp}.xlsx"
     filepath = os.path.join(output_dir, filename)
     
     wb.save(filepath)

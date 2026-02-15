@@ -70,10 +70,10 @@ Your Ownership: {investor_ownership:.2f}%
 
 TOTAL LOAN ACTIVITY
 
-Effective    Beginning         Interest    Principal      Ending
-Date         Principal         Income      Activity       Principal
-             Balance                                      Balance
-─────────────────────────────────────────────────────────────────
+Effective    Beginning         Interest          Ending
+Date         Principal         Income            Principal
+             Balance                             Balance
+─────────────────────────────────────────────────────────────
 {effective_date:<12} ${period_data['principal_beginning']:>14,.2f}  ${period_data['interest_owed']:>10,.2f}                 ${period_data['principal_ending']:>14,.2f}
 """
     
@@ -89,10 +89,10 @@ Date         Principal         Income      Activity       Principal
 
 YOUR ALLOCATION ({investor_ownership:.2f}%)
 
-Effective    Beginning         Interest    Principal      Ending
-Date         Principal         Income      Activity       Principal
-             Balance                                      Balance
-─────────────────────────────────────────────────────────────────
+Effective    Beginning         Interest          Ending
+Date         Principal         Income            Principal
+             Balance                          Balance
+─────────────────────────────────────────────────────────────
 {effective_date:<12} ${investor['principal_beginning']:>14,.2f}  ${investor['interest']:>10,.2f}                 ${investor['principal_ending']:>14,.2f}
 """
     
@@ -197,7 +197,7 @@ def generate_all_investor_statements_for_loan(
         
         # Save to file
         period_num = allocation_data['period_number']
-        filename = f"{loan.loan_id}_Period{period_num}_{investor['investor_id']}.txt"
+        filename = f"{loan.loan_name}_Period{period_num}_{investor['investor_short_name']}.txt"
         filepath = os.path.join(output_dir, filename)
         
         with open(filepath, 'w') as f:

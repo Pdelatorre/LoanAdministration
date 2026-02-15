@@ -1,5 +1,6 @@
-loan_id,investor_id,investor_name,ownership_pct,effective_date
-LOAN-001,INV-A,Investor A LLC,40.00,2025-01-01
+loan_id,investor_id,investor_name,investor_short_name,ownership_pct,effective_date
+EXAMPLE-LOAN,INV-A,Investor A LLC,InvestorA,40.00,2025-01-01
+EXAMPLE-LOAN,INV-B,Sovereign Wealth Fund,SovereignFund,60.00,2025-01-01
 ```
 This shows the exact format with example rows.
 ```

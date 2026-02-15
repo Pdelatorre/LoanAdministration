@@ -5,8 +5,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 import config
 
 
@@ -76,7 +76,7 @@ def generate_investor_statement_pdf(
         'CustomTitle',
         parent=styles['Heading1'],
         fontSize=14,
-        textColor=colors.HexColor('#333333'),
+        textColor=colors.black,
         spaceAfter=6,
         alignment=TA_CENTER
     )
@@ -85,7 +85,7 @@ def generate_investor_statement_pdf(
         'CustomSubtitle',
         parent=styles['Heading2'],
         fontSize=12,
-        textColor=colors.HexColor('#333333'),
+        textColor=colors.black,
         spaceAfter=12,
         alignment=TA_CENTER,
         fontName='Helvetica-Bold'
@@ -95,7 +95,7 @@ def generate_investor_statement_pdf(
         'CustomHeading',
         parent=styles['Heading3'],
         fontSize=11,
-        textColor=colors.HexColor('#333333'),
+        textColor=colors.black,
         spaceAfter=6,
         spaceBefore=12,
         fontName='Helvetica-Bold'
@@ -105,24 +105,12 @@ def generate_investor_statement_pdf(
         'CustomNormal',
         parent=styles['Normal'],
         fontSize=10,
-        textColor=colors.HexColor('#333333')
+        textColor=colors.black
     )
     
-    # Header Box
-    header_data = [
-        [Paragraph(f"[{company_name}]", title_style)],
-        [Paragraph("INVESTOR LOAN STATEMENT", subtitle_style)]
-    ]
-    
-    header_table = Table(header_data, colWidths=[6.5*inch])
-    header_table.setStyle(TableStyle([
-        ('BOX', (0, 0), (-1, -1), 2, colors.HexColor('#333333')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-    ]))
-    
-    elements.append(header_table)
+    # Header - Simple, no box
+    elements.append(Paragraph(f"{company_name}", title_style))
+    elements.append(Paragraph("INVESTOR LOAN STATEMENT", subtitle_style))
     elements.append(Spacer(1, 0.2*inch))
     
     # Investor Name
@@ -142,42 +130,40 @@ def generate_investor_statement_pdf(
     elements.append(Paragraph("TOTAL LOAN ACTIVITY", heading_style))
     
     loan_table_data = [
-        ['Effective\nDate', 'Beginning\nPrincipal', 'Interest\nIncome', 'Principal\nActivity', 'Ending\nPrincipal'],
+        ['Effective\nDate', 'Beginning\nPrincipal', 'Interest\nIncome', 'Ending\nPrincipal'],
         [
             effective_date,
             f"${period_data['principal_beginning']:,.2f}",
             f"${period_data['interest_owed']:,.2f}",
-            "-",
             f"${period_data['principal_ending']:,.2f}"
         ]
     ]
     
     # Add prepayment rows if exist
     if period_data.get('prepayments'):
-        loan_table_data.append(['Activity During Period:', '', '', '', ''])
         for pp in period_data['prepayments']:
             pp_date = pp['payment_date'].strftime('%m/%d/%Y')
             loan_table_data.append([
-                f"  {pp_date} - Principal Prepayment",
+                f"{pp_date} - Principal Prepayment",
                 '',
                 '',
-                f"(${ pp['amount']:,.2f})",
-                ''
+                f"(${pp['amount']:,.2f})"
             ])
     
-    loan_table = Table(loan_table_data, colWidths=[1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch])
+    loan_table = Table(loan_table_data, colWidths=[1.2*inch, 1.8*inch, 1.5*inch, 1.9*inch])
     loan_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f0f0')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#333333')),
-        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        # Header row - bold with underline
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('LINEBELOW', (0, 0), (-1, 0), 1, colors.black),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
         ('TOPPADDING', (0, 0), (-1, 0), 8),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#dddddd')),
+        
+        # Data rows - clean, no lines
         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
+        ('ALIGN', (0, 1), (-1, -1), 'CENTER'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('TOPPADDING', (0, 1), (-1, -1), 6),
         ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
@@ -190,44 +176,42 @@ def generate_investor_statement_pdf(
     elements.append(Paragraph(f"YOUR ALLOCATION ({investor_ownership:.2f}%)", heading_style))
     
     investor_table_data = [
-        ['Effective\nDate', 'Beginning\nPrincipal', 'Interest\nIncome', 'Principal\nActivity', 'Ending\nPrincipal'],
+        ['Effective\nDate', 'Beginning\nPrincipal', 'Interest\nIncome', 'Ending\nPrincipal'],
         [
             effective_date,
             f"${investor['principal_beginning']:,.2f}",
             f"${investor['interest']:,.2f}",
-            "-",
             f"${investor['principal_ending']:,.2f}"
         ]
     ]
     
     # Add investor prepayment rows if exist
     if investor['principal_prepayment'] > 0:
-        investor_table_data.append(['Your Share of Activity:', '', '', '', ''])
         if period_data.get('prepayments'):
             for pp in period_data['prepayments']:
                 pp_date = pp['payment_date'].strftime('%m/%d/%Y')
                 investor_pp = investor['principal_prepayment']
                 investor_table_data.append([
-                    f"  {pp_date} - Principal Prepayment",
+                    f"{pp_date} - Principal Prepayment",
                     '',
                     '',
-                    f"(${ investor_pp:,.2f})",
-                    ''
+                    f"(${investor_pp:,.2f})"
                 ])
     
-    investor_table = Table(investor_table_data, colWidths=[1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch])
+    investor_table = Table(investor_table_data, colWidths=[1.2*inch, 1.8*inch, 1.5*inch, 1.9*inch])
     investor_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f0f0')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#333333')),
-        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        # Header row - bold with underline
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('LINEBELOW', (0, 0), (-1, 0), 1, colors.black),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
         ('TOPPADDING', (0, 0), (-1, 0), 8),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#dddddd')),
+        
+        # Data rows - clean, no lines
         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
+        ('ALIGN', (0, 1), (-1, -1), 'CENTER'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('TOPPADDING', (0, 1), (-1, -1), 6),
         ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
@@ -263,7 +247,7 @@ def generate_investor_statement_pdf(
             fee_table.setStyle(TableStyle([
                 ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
                 ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                ('LINEABOVE', (0, -1), (-1, -1), 2, colors.HexColor('#333333')),
+                ('LINEABOVE', (0, -1), (-1, -1), 1, colors.black),
                 ('FONTSIZE', (0, 0), (-1, -1), 10),
                 ('TOPPADDING', (0, 0), (-1, -1), 4),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
@@ -272,7 +256,7 @@ def generate_investor_statement_pdf(
             elements.append(fee_table)
             elements.append(Spacer(1, 0.2*inch))
             
-            # Store for distribution summary
+            # Store for income summary
             total_additional = investor_fees['total_fees']
         else:
             total_additional = 0.00
@@ -299,7 +283,7 @@ def generate_investor_statement_pdf(
     summary_table.setStyle(TableStyle([
         ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
         ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.HexColor('#333333')),
+        ('LINEABOVE', (0, -1), (-1, -1), 1, colors.black),
         ('FONTSIZE', (0, 0), (-1, -1), 10),
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
@@ -336,7 +320,8 @@ def generate_all_investor_pdfs(
     
     for investor in allocation_data['investor_allocations']:
         period_num = allocation_data['period_number']
-        filename = f"{loan.loan_id}_Period{period_num}_{investor['investor_id']}.pdf"
+        investor_short = investor.get('investor_short_name', investor['investor_id'])
+        filename = f"{loan.loan_name}_Period{period_num}_{investor_short}.pdf"
         filepath = os.path.join(output_dir, filename)
         
         generate_investor_statement_pdf(

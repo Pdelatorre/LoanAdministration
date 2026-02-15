@@ -56,6 +56,7 @@ def allocate_period_to_investors(
                 investor_totals[inv_id] = {
                     'investor_id': inv_id,
                     'investor_name': investor['investor_name'],
+                    'investor_short_name': investor['investor_short_name'],
                     'interest': 0.0,
                     'principal_beginning': 0.0,
                     'principal_ending': 0.0,
