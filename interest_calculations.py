@@ -1,5 +1,53 @@
 from datetime import datetime, timedelta
 from typing import List, Dict
+import math
+
+
+def penny_round(total: float, shares: List[float]) -> List[float]:
+    """
+    Distribute `total` across `shares` using the Largest Remainder Method so
+    that every share is rounded to the nearest cent and the sum of all shares
+    equals `total` exactly (to the penny).
+
+    Algorithm
+    ---------
+    1. Floor every share to the penny.
+    2. Sum the floored shares — the shortfall will be 0 or more cents.
+    3. Rank investors by their fractional-cent remainder (largest first).
+    4. Award one extra cent to each top-ranked investor until the shortfall
+       is zero.
+
+    This is the industry-standard approach used in bond/loan accounting:
+    no one loses or gains more than $0.01, and the total is always exact.
+
+    Args:
+        total:  The precise total that must be distributed (e.g. interest_owed).
+        shares: List of each investor's calculated (unrounded) share.
+                Must sum to approximately `total`.
+
+    Returns:
+        List of penny-rounded amounts in the same order as `shares`,
+        guaranteed to sum to round(total, 2).
+    """
+    if not shares:
+        return []
+
+    # Work in integer cents to avoid floating-point drift
+    total_cents = round(total * 100)                         # e.g. 10000 for $100.00
+    floored_cents = [math.floor(s * 100) for s in shares]   # floor each share to cents
+    remainders = [s * 100 - fc for s, fc in zip(shares, floored_cents)]  # fractional remainders
+
+    shortfall = total_cents - sum(floored_cents)             # always 0 or a small positive int
+
+    # Sort indices by remainder descending; ties broken by original order (stable)
+    ranked = sorted(range(len(shares)), key=lambda i: remainders[i], reverse=True)
+
+    result_cents = floored_cents[:]
+    for i in range(shortfall):
+        result_cents[ranked[i]] += 1
+
+    return [c / 100.0 for c in result_cents]
+
 
 # Calculate effective interest rate with floor and ceiling
 def calculate_effective_rate(
@@ -11,10 +59,11 @@ def calculate_effective_rate(
     """Calculates the effective interest rate applying floor and ceiling to the SOFR rate."""
     # Apply floor and ceiling to SOFR rate
     adjusted_sofr = max(floor, min(sofr_rate, ceiling))
-    
-    # Calculate effective rate
-    effective_rate = adjusted_sofr + margin
-    
+
+    # Calculate effective rate, rounded to 7 decimal places (= 5 decimal places as a percentage)
+    # to eliminate floating-point noise from the addition
+    effective_rate = round(adjusted_sofr + margin, 7)
+
     return effective_rate
 
 
@@ -51,8 +100,16 @@ def calculate_period_interest(
         interest = principal * annual_rate * (days / 365)
         return interest
     elif day_count_convention == "30/360":
-        interest = principal * annual_rate * (days / 360)
-        return interest
+        # 30/360 normalizes every month to 30 days regardless of actual calendar days.
+        # Standard formula: Y1/M1/D1 → Y2/M2/D2
+        # days_30_360 = 360*(Y2-Y1) + 30*(M2-M1) + min(D2,30) - min(D1,30)
+        # Since we receive pre-computed start/end dates from the period schedule,
+        # we reconstruct that count here via the ISDA 30/360 US formula.
+        raise NotImplementedError(
+            "30/360 day-count convention is not yet implemented correctly. "
+            "This loan should use 'actual/360' or 'actual/365'. "
+            "Please update the loan's day_count_convention setting."
+        )
     else:
         raise ValueError(f"Unsupported day count convention: {day_count_convention}")
 

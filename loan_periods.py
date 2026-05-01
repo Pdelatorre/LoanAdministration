@@ -40,10 +40,21 @@ def generate_interest_periods(
 
 
     # Middle periods
-    current_start_date = first_period_end + timedelta(days=1) # First day of next month
-    while current_start_date < maturity_date.replace(day=1):
-        current_end_date = get_period_end_date(current_start_date.year, current_start_date.month, holidays, period_end_convention)
-        
+    # Track the target billing month separately from the start date.
+    # With last-business-day convention the next period may start on a date
+    # still in the previous calendar month (e.g. Sep 30 when Sep 29 is the
+    # last business day of September), so we cannot derive the billing month
+    # from current_start_date.month — we advance it independently each iteration.
+    if origination_date.month == 12:
+        target_year, target_month = origination_date.year + 1, 1
+    else:
+        target_year, target_month = origination_date.year, origination_date.month + 1
+
+    current_start_date = first_period_end + timedelta(days=1)
+
+    while (target_year, target_month) < (maturity_date.year, maturity_date.month):
+        current_end_date = get_period_end_date(target_year, target_month, holidays, period_end_convention)
+
         middle_period = {
             'period_number': period_number,
             'start_date': current_start_date,
@@ -53,22 +64,30 @@ def generate_interest_periods(
         }
         periods.append(middle_period)
         period_number += 1
-        
-        # Move to the first day of the next month
-        if current_start_date.month == 12:
-            current_start_date = datetime(current_start_date.year + 1, 1, 1)
-        else:
-            current_start_date = datetime(current_start_date.year, current_start_date.month + 1, 1)
 
-    # Last period
-    last_period_start = current_start_date # First day of final month
-    
+        # Next period starts the calendar day after this period ends
+        current_start_date = current_end_date + timedelta(days=1)
+
+        # Advance the target billing month by one
+        if target_month == 12:
+            target_year, target_month = target_year + 1, 1
+        else:
+            target_month += 1
+
+    # Last period — end date is the last business day of the maturity month,
+    # capped at maturity_date for stub/early-payoff scenarios where maturity
+    # falls before that month's last business day.
+    last_period_start = current_start_date  # Day after last middle period's end
+    last_period_end = get_period_end_date(maturity_date.year, maturity_date.month, holidays, period_end_convention)
+    if maturity_date < last_period_end:
+        last_period_end = maturity_date
+
     last_period = {
         'period_number': period_number,
         'start_date': last_period_start,
-        'end_date': maturity_date,
-        'payment_due_date': maturity_date,
-        'days': (maturity_date - last_period_start).days + 1
+        'end_date': last_period_end,
+        'payment_due_date': last_period_end,
+        'days': (last_period_end - last_period_start).days + 1
     }
     periods.append(last_period)
 

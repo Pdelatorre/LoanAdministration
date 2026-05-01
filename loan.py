@@ -21,7 +21,9 @@ class Loan:
         period_end_convention: str = "last_business_day",
         pik_rate: float = 0.0,
         interest_prepayment: float = 0.0,
-        loan_name: str = None
+        loan_name: str = None,
+        oid_amount: float = 0.0,
+        closing_expenses: float = 0.0,
     ):
         """
         Initialize a loan.
@@ -39,6 +41,8 @@ class Loan:
             pik_rate: PIK rate (as decimal, e.g., 0.0250 for 2.50%)
             interest_prepayment: Prepayment amount
             loan_name: Display name for loan (defaults to borrower if not provided)
+            oid_amount: Original Issue Discount at closing (default 0)
+            closing_expenses: Closing costs deducted from investor call before wiring to borrower (default 0)
         """
         self.loan_id = loan_id
         self.borrower = borrower
@@ -52,6 +56,8 @@ class Loan:
         self.pik_rate = pik_rate
         self.interest_prepayment = interest_prepayment
         self.loan_name = loan_name if loan_name else borrower
+        self.oid_amount = oid_amount
+        self.closing_expenses = closing_expenses
         
         # Generate holidays once
         self.holidays = self._get_relevant_holidays()
@@ -127,6 +133,11 @@ class Loan:
             from sofr_rates import load_sofr_rates
             sofr_rates = load_sofr_rates(sofr_filepath)
 
+        # Build OID amortization schedule (zero array when no OID)
+        from oid_calculations import build_oid_schedule
+        oid_schedule = build_oid_schedule(self.oid_amount, self.periods)
+        cumulative_oid = 0.0  # Running total of OID recognized
+
         # Determine if PIK loan
         is_pik_loan = self.pik_rate > 0
         
@@ -198,12 +209,15 @@ class Loan:
                 principal_after_prepayment = current_principal
                 segments = []
 
+            # Round interest_owed to cents before any further arithmetic
+            interest_owed = round(interest_owed, 2)
+
             # Apply interest prepayment if applicable
             prepaid_balance_start = current_prepaid_balance
 
             if current_prepaid_balance > 0:
-                prepaid_applied = min(current_prepaid_balance, interest_owed)
-                prepaid_balance_end = current_prepaid_balance - prepaid_applied
+                prepaid_applied = round(min(current_prepaid_balance, interest_owed), 2)
+                prepaid_balance_end = round(current_prepaid_balance - prepaid_applied, 2)
             else:
                 prepaid_applied = 0.0
                 prepaid_balance_end = 0.0
@@ -212,22 +226,22 @@ class Loan:
 
             # Check if PIK is elected for this period
             pik_elected = pik_elections.get(period_num, False) and prepaid_balance_start == 0
-                
+
             if pik_elected:
                 # Calculate PIK amount
-                pik_amount = calculate_period_interest(
+                pik_amount = round(calculate_period_interest(
                     principal_after_prepayment,
                     self.pik_rate,
                     period['days']
-                )
-                    
+                ), 2)
+
                 # Validate: PIK shouldn't exceed interest owed
                 if pik_amount > interest_owed:
                     print(f"Warning: Period {period_num} - PIK amount (${pik_amount:,.2f}) "
                         f"exceeds interest owed (${interest_owed:,.2f}). "
                         f"Capping PIK at interest owed.")
                     pik_amount = interest_owed
-                    
+
                 principal_ending = principal_after_prepayment + pik_amount
             else:
                 # No PIK
@@ -236,10 +250,16 @@ class Loan:
 
                 if pik_elections.get(period_num, False) and prepaid_balance_start > 0:
                     print(f"Note: Period {period_num} - PIK election ignored due to prepaid balance of ${prepaid_balance_start:,.2f}")
-                
-            # Calculate final cash due
-            cash_due = interest_owed - prepaid_applied - pik_amount
-                
+
+            # Calculate final cash due — all components already penny-rounded
+            cash_due = round(interest_owed - prepaid_applied - pik_amount, 2)
+
+            # OID amortization for this period
+            period_oid = oid_schedule[period_num - 1]  # period_num is 1-indexed
+            oid_unamortized_start = round(self.oid_amount - cumulative_oid, 2)
+            oid_unamortized_end   = round(oid_unamortized_start - period_oid, 2)
+            cumulative_oid = round(cumulative_oid + period_oid, 2)
+
             # Build schedule entry
             schedule_entry = {
                 **period,  # Include all original period data
@@ -257,6 +277,9 @@ class Loan:
                 'pik_amount': pik_amount,
                 'cash_due': cash_due,
                 'principal_ending': principal_ending,
+                'period_oid': period_oid,
+                'oid_unamortized_start': oid_unamortized_start,
+                'oid_unamortized_end': oid_unamortized_end,
                 'segments': segments,
                 'prepayments': period_prepayments
             }
@@ -278,8 +301,14 @@ class Loan:
                 amount_paid = sum(p['amount'] for p in period_payments)
 
                 tolerance = 0.01
+                cash_due = entry.get('cash_due', 0)
 
-                if amount_paid >= entry['cash_due'] - tolerance:
+                if cash_due <= tolerance:
+                    # No cash was due this period (e.g. covered entirely by
+                    # prepaid interest) — treat as fully settled regardless of
+                    # whether a payment record exists.
+                    payment_status = 'Paid'
+                elif amount_paid >= cash_due - tolerance:
                     payment_status = 'Paid'
                 elif amount_paid > tolerance:
                     payment_status = 'Partially Paid'

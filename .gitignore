@@ -16,12 +16,20 @@ ENV/
 *.swp
 *.swo
 
+# Claude Code
+.claude/
+
+# pytest cache
+.pytest_cache/
+
 # Data files (keep templates, ignore actual data)
 data/sofr_rates.csv
 data/pik_elections.csv
 data/payments.csv
 data/investors.csv
 data/fees.csv
+data/loans.csv
+data/loans_history.csv
 !data/sofr_rates_template.csv
 !data/pik_elections_template.csv
 !data/payments_template.csv
@@ -34,10 +42,12 @@ output/*.csv
 output/*.txt
 !output/.gitkeep
 
-# Output files - Subdirectories (v1.4)
+# Output files - Subdirectories
 output/investor_reports/*.txt
 output/investor_reports_pdf/*.pdf
 output/audit_reports/*.xlsx
+output/distribution_notices/*.txt
+output/distribution_notices_pdf/*.pdf
 
 # OS
 .DS_Store

@@ -26,7 +26,7 @@ loan = Loan(
     maturity_date=datetime(2025, 3, 31)
 )
 
-add_investor("PDF-TEST", "INV-A", "Investor A", 100.0, datetime(2025, 1, 1))
+add_investor("PDF-TEST", "INV-A", "Investor A", "Inv-A", 100.0, datetime(2025, 1, 1))
 
 add_fee("PDF-TEST", datetime(2025, 2, 15), "prepayment_fee", 5000.00, period_number=2)
 

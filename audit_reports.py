@@ -89,6 +89,8 @@ def _create_loan_summary_tab(wb, loan, schedule):
     
     # Loan details
     row = 3
+    convention_label = "Last Business Day" if loan.period_end_convention == "last_business_day" else "Calendar Month End"
+
     details = [
         ("Loan ID:", loan.loan_id),
         ("Borrower:", loan.borrower),
@@ -98,11 +100,39 @@ def _create_loan_summary_tab(wb, loan, schedule):
         ("SOFR Floor:", f"{loan.sofr_floor * 100:.2f}%"),
         ("Origination Date:", loan.origination_date.strftime('%Y-%m-%d')),
         ("Maturity Date:", loan.maturity_date.strftime('%Y-%m-%d')),
+        ("Period End Convention:", convention_label),
+        ("Day Count Convention:", "Actual/360"),
         ("", ""),
         ("Total Periods:", len(schedule)),
         ("Total Interest:", f"${sum(p['interest_owed'] for p in schedule):,.2f}"),
+        ("Interest Prepaid at Close:", f"${loan.interest_prepayment:,.2f}"),
+        ("Prepaid Interest Applied:", f"${sum(p.get('prepaid_applied', 0) for p in schedule):,.2f}"),
         ("Current Principal:", f"${schedule[-1]['principal_ending']:,.2f}"),
     ]
+
+    # OID funding waterfall — only shown when OID is present
+    oid_amount = getattr(loan, 'oid_amount', 0)
+    if oid_amount > 0:
+        from oid_calculations import compute_net_investor_call, compute_net_borrower_advance
+        closing_expenses = getattr(loan, 'closing_expenses', 0)
+        net_call = compute_net_investor_call(loan.principal, loan.interest_prepayment, oid_amount)
+        net_adv  = compute_net_borrower_advance(net_call, closing_expenses)
+        total_oid_recognized = sum(p.get('period_oid', 0) for p in schedule)
+        details += [
+            ("", ""),
+            ("── OID FUNDING WATERFALL ──", ""),
+            ("OID Amount:", f"${oid_amount:,.2f}"),
+            ("Interest Prepaid at Close:", f"${loan.interest_prepayment:,.2f}"),
+            ("Net Investor Call:", f"${net_call:,.2f}"),
+        ]
+        if closing_expenses > 0:
+            details.append(("Closing Expenses:", f"${closing_expenses:,.2f}"))
+        details += [
+            ("Net Borrower Advance:", f"${net_adv:,.2f}"),
+            ("", ""),
+            ("Total OID Recognized to Date:", f"${total_oid_recognized:,.2f}"),
+            ("OID Unamortized (Contra-Asset):", f"${schedule[-1].get('oid_unamortized_end', 0):,.2f}"),
+        ]
     
     for label, value in details:
         ws[f'A{row}'] = label
@@ -118,20 +148,29 @@ def _create_loan_summary_tab(wb, loan, schedule):
 def _create_period_detail_tab(wb, schedule):
     """Create Interest Period Detail tab."""
     ws = wb.create_sheet("Period Detail")
-    
+
+    # Detect OID — add columns only when the loan has OID
+    has_oid = any(p.get('period_oid', 0) != 0 for p in schedule)
+
     # Headers
     headers = [
-        "Period", "Start Date", "End Date", "Days", 
+        "Period", "Start Date", "End Date", "Days",
         "Principal Beginning", "SOFR Rate", "Margin", "Effective Rate",
-        "Interest Owed", "Interest Paid", "Principal Ending", "Status"
+        "Interest Owed",
     ]
-    
+    if has_oid:
+        headers += ["Period OID", "OID Unamortized End"]
+    headers += [
+        "Interest Paid", "Prepaid Applied", "Prepaid Balance End",
+        "Principal Ending", "Status"
+    ]
+
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
         cell.alignment = Alignment(horizontal="center")
-    
+
     # Data rows
     for row, period in enumerate(schedule, 2):
         ws.cell(row=row, column=1, value=period['period_number'])
@@ -143,11 +182,21 @@ def _create_period_detail_tab(wb, schedule):
         ws.cell(row=row, column=7, value=period.get('margin', 0))
         ws.cell(row=row, column=8, value=period.get('effective_rate', 0))
         ws.cell(row=row, column=9, value=period['interest_owed'])
-        ws.cell(row=row, column=10, value=period.get('interest_paid', 0))
-        ws.cell(row=row, column=11, value=period['principal_ending'])
+
+        # OID columns (shift subsequent columns when present)
+        col_offset = 0
+        if has_oid:
+            ws.cell(row=row, column=10, value=period.get('period_oid', 0))
+            ws.cell(row=row, column=11, value=period.get('oid_unamortized_end', 0))
+            col_offset = 2
+
+        ws.cell(row=row, column=10 + col_offset, value=period.get('amount_paid', 0))
+        ws.cell(row=row, column=11 + col_offset, value=period.get('prepaid_applied', 0))
+        ws.cell(row=row, column=12 + col_offset, value=period.get('prepaid_balance_end', 0))
+        ws.cell(row=row, column=13 + col_offset, value=period['principal_ending'])
+
         # Determine status based on payment
         payment_status = period.get('payment_status')
-
         if payment_status == 'Paid':
             status = 'Final'
         elif payment_status == 'Partially Paid':
@@ -157,16 +206,19 @@ def _create_period_detail_tab(wb, schedule):
         else:
             status = 'Projected'
 
-        ws.cell(row=row, column=12, value=status)
-        
+        ws.cell(row=row, column=14 + col_offset, value=status)
+
         # Format currency columns
-        for col in [5, 9, 10, 11]:
+        currency_cols = [5, 9, 10 + col_offset, 11 + col_offset, 12 + col_offset, 13 + col_offset]
+        if has_oid:
+            currency_cols += [10, 11]  # period_oid, oid_unamortized_end
+        for col in currency_cols:
             ws.cell(row=row, column=col).number_format = '$#,##0.00'
-        
+
         # Format percentage columns
         for col in [6, 7, 8]:
-            ws.cell(row=row, column=col).number_format = '0.00%'
-    
+            ws.cell(row=row, column=col).number_format = '0.00000%'
+
     # Auto-width columns
     for col in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(col)].width = 15
@@ -313,24 +365,39 @@ def _create_reconciliation_tab(wb, loan_id, schedule):
     
     row = 3
     
-    # Check 1: Interest allocations sum to period totals
-    ws[f'A{row}'] = "Check 1: Interest Allocations = Period Totals"
+    # Check 1: Interest allocations sum to period totals (penny-exact after rounding)
+    ws[f'A{row}'] = "Check 1: Interest Allocations = Period Totals (Penny-Exact)"
     ws[f'A{row}'].font = Font(bold=True)
     row += 1
-    
+
+    ws[f'A{row}'] = "Period"
+    ws[f'B{row}'] = "Interest Owed"
+    ws[f'C{row}'] = "Total Allocated"
+    ws[f'D{row}'] = "Remainder ($)"
+    ws[f'E{row}'] = "Match"
+    for col in ['A', 'B', 'C', 'D', 'E']:
+        ws[f'{col}{row}'].font = Font(bold=True)
+    row += 1
+
     for period in schedule:
         try:
             allocation = allocate_period_to_investors(loan_id, period)
             total_allocated = sum(inv['interest'] for inv in allocation['investor_allocations'])
             period_interest = period['interest_owed']
-            match = abs(total_allocated - period_interest) < 0.01
-            
+            remainder = round(total_allocated - period_interest, 2)
+            # Penny-exact: tolerance is zero after Largest Remainder rounding
+            match = abs(remainder) < 0.005
+
             ws[f'A{row}'] = f"Period {period['period_number']}"
             ws[f'B{row}'] = period_interest
             ws[f'C{row}'] = total_allocated
-            ws[f'D{row}'] = "✓" if match else "✗"
-            ws[f'D{row}'].font = Font(color="00FF00" if match else "FF0000", bold=True)
-            
+            ws[f'D{row}'] = remainder
+            ws[f'E{row}'] = "✓" if match else "✗"
+            ws[f'E{row}'].font = Font(color="00FF00" if match else "FF0000", bold=True)
+
+            for col in ['B', 'C', 'D']:
+                ws[f'{col}{row}'].number_format = '$#,##0.00'
+
             row += 1
         except:
             pass
@@ -340,55 +407,60 @@ def _create_reconciliation_tab(wb, loan_id, schedule):
     from fee_allocation import allocate_fee_to_investors
     
     row += 2
-    ws[f'A{row}'] = "Check 2: Fee Allocations = Fee Totals"
+    ws[f'A{row}'] = "Check 2: Fee Allocations = Fee Totals (Penny-Exact)"
     ws[f'A{row}'].font = Font(bold=True)
     row += 1
-    
+
     ws[f'A{row}'] = "Period/Fee"
     ws[f'B{row}'] = "Total Fee"
     ws[f'C{row}'] = "Allocated"
-    ws[f'D{row}'] = "Match"
+    ws[f'D{row}'] = "Remainder ($)"
+    ws[f'E{row}'] = "Match"
+    for col in ['A', 'B', 'C', 'D', 'E']:
+        ws[f'{col}{row}'].font = Font(bold=True)
     row += 1
-    
+
+    fees_found = False
     for period in schedule:
         try:
             period_fees = get_fees_for_period(loan_id, period['period_number'])
-            
+
             for fee in period_fees:
+                fees_found = True
                 fee_allocation = allocate_fee_to_investors(
                     loan_id=loan_id,
                     fee_date=fee['fee_date'],
                     fee_amount=fee['amount'],
                     fee_type=fee['fee_type']
                 )
-                
+
                 total_allocated = sum(inv['fee_share'] for inv in fee_allocation['investor_allocations'])
-                match = abs(total_allocated - fee['amount']) < 0.01
-                
+                remainder = round(total_allocated - fee['amount'], 2)
+                match = abs(remainder) < 0.005  # penny-exact after Largest Remainder rounding
+
                 ws[f'A{row}'] = f"P{period['period_number']} - {get_fee_display_name(fee['fee_type'])}"
                 ws[f'B{row}'] = fee['amount']
                 ws[f'C{row}'] = total_allocated
-                ws[f'D{row}'] = "✓" if match else "✗"
-                ws[f'D{row}'].font = Font(color="00FF00" if match else "FF0000", bold=True)
-                
-                # Format currency
-                ws[f'B{row}'].number_format = '$#,##0.00'
-                ws[f'C{row}'].number_format = '$#,##0.00'
-                
+                ws[f'D{row}'] = remainder
+                ws[f'E{row}'] = "✓" if match else "✗"
+                ws[f'E{row}'].font = Font(color="00FF00" if match else "FF0000", bold=True)
+
+                for col in ['B', 'C', 'D']:
+                    ws[f'{col}{row}'].number_format = '$#,##0.00'
+
                 row += 1
         except:
             pass
-    
-    # If no fees found
-    if row == 3 + 2:
+
+    if not fees_found:
         ws[f'A{row}'] = "No fees to reconcile"
 
-
     # Column widths
-    ws.column_dimensions['A'].width = 30
-    ws.column_dimensions['B'].width = 20
-    ws.column_dimensions['C'].width = 20
-    ws.column_dimensions['D'].width = 10
+    ws.column_dimensions['A'].width = 35
+    ws.column_dimensions['B'].width = 18
+    ws.column_dimensions['C'].width = 18
+    ws.column_dimensions['D'].width = 16
+    ws.column_dimensions['E'].width = 10
 
 def _create_fee_income_tab(wb, loan_id):
     """Create Fee Income tab."""

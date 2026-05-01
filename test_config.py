@@ -34,8 +34,8 @@ loan = Loan(
 )
 
 # Add investors
-add_investor("TEST-CONFIG", "INV-A", "Investor A", 50.0, datetime(2025, 1, 1))
-add_investor("TEST-CONFIG", "INV-B", "Investor B", 50.0, datetime(2025, 1, 1))
+add_investor("TEST-CONFIG", "INV-A", "Investor A", "Inv-A", 50.0, datetime(2025, 1, 1))
+add_investor("TEST-CONFIG", "INV-B", "Investor B", "Inv-B", 50.0, datetime(2025, 1, 1))
 
 # Generate schedule
 sofr_rates = load_sofr_rates()

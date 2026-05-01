@@ -6,11 +6,13 @@ A comprehensive Python-based loan administration system for calculating interest
 
 ### Core Loan Management
 - **Floating Rate Calculations**: Supports 1-month Term SOFR with configurable margin, floor, and ceiling
-- **Flexible Period Generation**: Handles non-standard interest periods with proper business day conventions
+- **Flexible Period Generation**: Handles non-standard interest periods with business day conventions (last business day or calendar month end)
 - **Interest Prepayment Tracking**: Manages upfront interest prepayments with automatic application to future periods
 - **Principal Prepayment Handling**: Mid-period principal prepayments with segmented interest calculation
 - **Payment Tracking**: Record and track interest payments and principal prepayments with status monitoring
 - **PIK (Payment-In-Kind) Interest**: Support for capitalizing interest with configurable PIK rates
+- **OID (Original Issue Discount)**: Day-weighted straight-line amortization with full funding waterfall (net investor call, net borrower advance, closing expenses)
+- **Loan Persistence**: CSV-backed loan storage with append-only audit history (`loan_storage.py`)
 
 ### Investor Management (v1.4)
 - **Multi-Investor Support**: Track ownership percentages with unlimited investors per loan
@@ -19,17 +21,24 @@ A comprehensive Python-based loan administration system for calculating interest
 - **Day-Weighted Calculations**: When ownership changes mid-period, allocations are prorated by days owned
 - **Ownership Validation**: Ensures ownership percentages always sum to 100%
 
-### Professional Reporting (v1.4)
+### Professional Reporting (v1.4+)
 - **Investor Distribution Statements**: Generate professional statements for each investor
-- **Multiple Output Formats**: 
+- **Multiple Output Formats**:
   - Text reports for quick review
   - PDF reports for investor distribution
-  - Excel audit reports (coming soon)
+  - Excel audit reports
+- **Distribution Notices**: Interim and supplemental notices for mid-period or post-statement distributions (text + PDF)
 - **Customizable Branding**: Configure company name and styling via central config
 - **Clean Formatting**: Professional layout with loan activity, investor allocation, and distribution summary
 
+### Fee System (v1.5)
+- **Fee Tracking**: Record prepayment, amendment, exit, waiver, default interest, and other fees
+- **Pro-Rata Allocation**: Fees allocated to investors by ownership percentage at time of fee
+- **Cash or PIK**: Each fee can be designated cash or capitalized (PIK)
+- **Period Assignment**: Fees can be assigned to specific interest periods
+
 ### Data Management
-- **CSV-Based Storage**: Simple, auditable data storage for SOFR rates, investors, and payments
+- **CSV-Based Storage**: Simple, auditable data storage for SOFR rates, investors, payments, fees, and loans
 - **Rate Management**: Track CME Term SOFR rates with historical data
 - **Multiple Export Formats**: Generate schedules in CSV (main + segment details) and formatted text
 - **Actual/360 Day Count**: Industry-standard interest calculation methodology
@@ -39,6 +48,7 @@ A comprehensive Python-based loan administration system for calculating interest
 - **Modular Architecture**: Clean separation of concerns with well-defined modules
 - **Configuration Management**: Central config file for all system settings
 - **Comprehensive Testing**: Full test suite for loan calculations and investor allocations
+- **Rate Diagnostic Tool**: `diagnose_rates.py` traces the full calculation chain for precision debugging
 - **Easy Setup**: Automated installation script with dependency management
 
 ## Project Structure
@@ -48,6 +58,9 @@ LoanAdministration/
 ├── requirements.txt               # Python dependencies
 ├── setup.sh                       # Automated setup script
 ├── README.md                      # This file
+├── PROCESS_GUIDE.md               # Non-technical user guide (PowerShell / Windows)
+├── WALKTHROUGH.md                 # Complete 8-period loan lifecycle walkthrough (bash)
+├── WALKTHROUGH_POWERSHELL.md      # Same walkthrough adapted for PowerShell / Windows
 
 # Core Loan System
 ├── loan.py                        # Main Loan class with calculations
@@ -58,6 +71,8 @@ LoanAdministration/
 ├── pik_elections.py               # PIK election management
 ├── payments.py                    # Payment recording and tracking
 ├── loan_export.py                 # Export functionality (CSV, text)
+├── loan_storage.py                # Loan persistence (loans.csv + audit history)
+├── oid_calculations.py            # OID amortization and funding waterfall
 
 # Investor System (v1.4)
 ├── investors.py                   # Investor ownership tracking
@@ -69,25 +84,40 @@ LoanAdministration/
 ├── fees.py                        # Fee storage and management
 ├── fee_allocation.py              # Pro-rata fee allocation
 
-# Interface & Testing
+# Distribution Notices (v1.6)
+├── distribution_notices.py        # Interim and supplemental notice generation (text)
+├── distribution_notices_pdf.py    # PDF distribution notices
+
+# Interface, Diagnostics & Testing
 ├── cli.py                         # Command-line interface
-├── test_loan_system.py            # Loan calculation tests
-├── test_investor_system.py        # Investor allocation tests
+├── diagnose_rates.py              # Rate precision diagnostic tool
+├── test_audit_report.py           # Audit report tests
 ├── test_config.py                 # Configuration integration tests
+├── test_fee_allocation.py         # Fee allocation tests
+├── test_fees_on_reports.py        # Fee reporting integration tests
+├── test_investor_system.py        # Investor allocation tests
+├── test_naming_and_columns.py     # Report naming and column tests
+├── test_pdf_simple.py             # PDF generation tests
 ├── demo_investor_workflow.sh      # Complete workflow demonstration
 
 # Data Storage
 ├── data/
-│   ├── sofr_rates.csv             # SOFR rate storage
-│   ├── pik_elections.csv          # PIK election storage
-│   ├── investors.csv              # Investor ownership records (auto-generated)
-│   └── payments.csv               # Payment history (auto-generated)
+│   ├── sofr_rates.csv             # SOFR rate storage (gitignored)
+│   ├── pik_elections.csv          # PIK election storage (gitignored)
+│   ├── investors.csv              # Investor ownership records (gitignored)
+│   ├── payments.csv               # Payment history (gitignored)
+│   ├── fees.csv                   # Fee records (gitignored)
+│   ├── loans.csv                  # Current loan state (gitignored)
+│   ├── loans_history.csv          # Append-only loan audit trail (gitignored)
+│   └── *_template.csv             # Template files (tracked in git)
 
 # Generated Reports
 └── output/
     ├── investor_reports/          # Text investor statements
     ├── investor_reports_pdf/      # PDF investor statements
-    └── audit_reports/             # Excel audit reports (coming soon)
+    ├── audit_reports/             # Excel audit reports
+    ├── distribution_notices/      # Text distribution notices
+    └── distribution_notices_pdf/  # PDF distribution notices
 ```
 
 ## Installation
@@ -114,7 +144,7 @@ This will:
 pip install -r requirements.txt
 
 # Create directory structure
-mkdir -p data output/investor_reports output/investor_reports_pdf output/audit_reports
+mkdir -p data output/investor_reports output/investor_reports_pdf output/audit_reports output/distribution_notices output/distribution_notices_pdf
 ```
 
 **No additional system dependencies required!**
@@ -168,7 +198,6 @@ python cli.py add-rate 2025-01-30 4.55
 **SOFR rate sources:**
 - Federal Reserve: https://www.newyorkfed.org/markets/reference-rates/sofr
 - Bloomberg Terminal: SOFR Index
-- Treasury Direct: Daily SOFR rates
 
 ### 2. Creating a Loan
 
@@ -182,6 +211,21 @@ python cli.py create \
   --margin 2.5 \
   --origination-date 2025-01-15 \
   --maturity-date 2025-12-31
+```
+
+**Loan with OID and closing expenses:**
+```bash
+python cli.py create \
+  --loan-id LOAN-001 \
+  --borrower "ABC Company LLC" \
+  --loan-name "ABC" \
+  --principal 5000000 \
+  --margin 2.5 \
+  --origination-date 2025-01-15 \
+  --maturity-date 2025-12-31 \
+  --oid-amount 50000 \
+  --closing-expenses 15000 \
+  --interest-prepayment 20000
 ```
 
 **Parameters:**
@@ -198,6 +242,9 @@ python cli.py create \
 - `--ceiling`: SOFR ceiling (default: none)
 - `--pik-rate`: PIK interest rate
 - `--interest-prepayment`: Upfront interest prepayment amount
+- `--oid-amount`: Original Issue Discount amount
+- `--closing-expenses`: Closing expenses deducted from borrower advance
+- `--period-end-convention`: `last_business_day` (default) or `calendar_month_end`
 
 ### 3. Adding Investors
 
@@ -301,33 +348,9 @@ python cli.py add-fee \
 python cli.py list-fees LOAN-001
 ```
 
-**Output:**
-```
-Fees for LOAN-001:
-====================================================================================================
-Date         | Type                      |         Amount | C/P  | Period | Description
-====================================================================================================
-2025-02-15   | Prepayment Fee            | $   10,000.00 | cash | P2     | Early payoff penalty
-2025-02-20   | Amendment Fee             | $    5,000.00 | cash | P2     | Rate modification
-====================================================================================================
-TOTAL        |                           | $   15,000.00
-```
-
-**PIK fees (capitalize into principal):**
-```bash
-python cli.py add-fee \
-  --loan-id LOAN-001 \
-  --date 2025-03-15 \
-  --type amendment_fee \
-  --amount 25000.00 \
-  --cash-or-pik pik \
-  --period 3 \
-  --description "Amendment fee - capitalized"
-```
-
 ### 6. Generating Investor Reports
 
-**Create script for report generation** (`generate_reports.py`):
+**Generate investor distribution statements (PDF):**
 ```python
 from datetime import datetime
 from loan import Loan
@@ -335,7 +358,6 @@ from investor_allocation import allocate_period_to_investors
 from investor_reports_pdf import generate_all_investor_pdfs
 from sofr_rates import load_sofr_rates
 
-# Create loan
 loan = Loan(
     loan_id="LOAN-001",
     borrower="ABC Company LLC",
@@ -346,45 +368,80 @@ loan = Loan(
     maturity_date=datetime(2025, 12, 31)
 )
 
-# Generate schedule
 sofr_rates = load_sofr_rates()
 schedule = loan.calculate_schedule(sofr_rates=sofr_rates)
 
-# Generate reports for Period 2
 period_number = 2
 allocation = allocate_period_to_investors("LOAN-001", schedule[period_number - 1])
 
-# Generate PDFs for all investors
 pdf_files = generate_all_investor_pdfs(
     loan=loan,
     period_data=schedule[period_number - 1],
     allocation_data=allocation
 )
-
-print(f"✅ Generated {len(pdf_files)} investor reports")
+print(f"Generated {len(pdf_files)} investor reports")
 ```
 
-**Reports automatically include:**
-- Interest income allocation
-- Fee income (if any fees exist for the period)
-- Principal activity
-- Income summary
+Output: `output/investor_reports_pdf/LOAN-001_Period2_INV-A.pdf`
 
-**Output:** `output/investor_reports_pdf/LOAN-001_Period2_INV-A.pdf`
+### 7. Generating Distribution Notices
 
-### 7. Complete Monthly Workflow
+Distribution notices document cash activity outside the normal month-end statement cycle.
+
+- **Interim**: Mid-period wire sent before the period closes
+- **Supplemental**: Post-statement event after period reports are already issued
+
+```python
+from datetime import datetime
+from distribution_notices import allocate_notice_to_investors, generate_all_notices
+from distribution_notices_pdf import generate_all_notice_pdfs
+
+effective_date = datetime(2025, 3, 15)
+allocations = allocate_notice_to_investors("LOAN-001", effective_date, total_amount=50000.00)
+
+# Text notices
+generate_all_notices(
+    loan_name="ABC",
+    period_number=2,
+    period_start=datetime(2025, 3, 1),
+    period_end=datetime(2025, 3, 31),
+    notice_type="interim",
+    allocations=allocations,
+    effective_date=effective_date,
+    description="Interim interest distribution"
+)
+
+# PDF notices
+generate_all_notice_pdfs(
+    loan_name="ABC",
+    period_number=2,
+    period_start=datetime(2025, 3, 1),
+    period_end=datetime(2025, 3, 31),
+    notice_type="interim",
+    allocations=allocations,
+    effective_date=effective_date,
+    description="Interim interest distribution"
+)
+```
+
+Output: `output/distribution_notices_pdf/ABC_Period2_Interim_2025-03-15_INV-A.pdf`
+
+### 8. Complete Monthly Workflow
 
 **Run the demo workflow:**
 ```bash
 bash demo_investor_workflow.sh
 ```
 
-This demonstrates:
-1. Creating a loan
-2. Adding investors
-3. Recording payments
-4. Adding fees
-5. Generating investor distribution statements
+**Follow the full walkthrough (bash):**
+```bash
+# See WALKTHROUGH.md for a complete 8-period lifecycle example
+```
+
+**Follow the full walkthrough (Windows PowerShell):**
+```powershell
+# See WALKTHROUGH_POWERSHELL.md for the Windows-adapted version
+```
 
 ## How It Works
 
@@ -393,6 +450,8 @@ This demonstrates:
 - **Middle periods**: First day to last business day of each month
 - **Final period**: First day of maturity month to exact maturity date
 
+Period end convention is configurable: `last_business_day` (default) or `calendar_month_end`.
+
 ### SOFR Reset Dates
 SOFR rates are set **2 business days before** each interest period begins, following CME Term SOFR conventions.
 
@@ -400,6 +459,16 @@ SOFR rates are set **2 business days before** each interest period begins, follo
 ```
 Effective Rate = max(SOFR Floor, min(SOFR, SOFR Ceiling)) + Margin
 Interest = Principal × Effective Rate × (Days / 360)
+```
+
+### OID Funding Waterfall
+```
+Net Investor Call    = Principal - Interest Prepayment - OID
+Net Borrower Advance = Net Investor Call - Closing Expenses
+
+OID amortization (day-weighted straight-line):
+  period_oid = OID × (period_days / total_loan_days)
+  Last period absorbs any penny-rounding residual
 ```
 
 ### Investor Allocation with Ownership Changes
@@ -429,7 +498,7 @@ Investor A allocation:
 
 ### Principal Prepayments
 
-**Mid-period prepayments:**
+Mid-period prepayments:
 - Effective end-of-day on payment date
 - Period split into segments with different principal balances
 - Interest calculated separately for each segment
@@ -440,7 +509,7 @@ Investor A allocation:
 
 When PIK is elected for a period:
 - **PIK Amount** = Principal × PIK Rate × (Days / 360)
-- **Cash Payment** = Interest Owed - PIK Amount  
+- **Cash Payment** = Interest Owed - PIK Amount
 - **New Principal** = Old Principal + PIK Amount
 - PIK amount compounds in subsequent periods
 
@@ -477,12 +546,38 @@ Total Additional Income:                      $   14,000.00
 
 INCOME SUMMARY
 
-Interest Income:                                  $   10,653.33
-Additional Income:                              $   14,000.00
+Interest Income:                              $   10,653.33
+Additional Income:                            $   14,000.00
                                               ────────────────
 Total Income Earned:                          $   24,653.33
-
 ─────────────────────────────────────────────────────────────
+```
+
+## Diagnostics
+
+**Trace rate precision through the full calculation chain:**
+```bash
+python diagnose_rates.py
+```
+
+This tool verifies every step from SOFR data loading through final interest output, useful for debugging rounding or precision discrepancies.
+
+## Testing
+
+**Run all tests:**
+```bash
+python test_config.py
+python test_investor_system.py
+python test_audit_report.py
+python test_fee_allocation.py
+python test_fees_on_reports.py
+python test_naming_and_columns.py
+python test_pdf_simple.py
+```
+
+**Run demo workflow:**
+```bash
+bash demo_investor_workflow.sh
 ```
 
 ## Technical Highlights
@@ -491,25 +586,12 @@ Total Income Earned:                          $   24,653.33
 - **Date Arithmetic**: Handles edge cases (month-end, leap years, holiday adjustments)
 - **Modular Design**: Separation of concerns with clear module boundaries
 - **Pro-Rata Allocation**: Sophisticated ownership change handling with day-weighting
+- **OID Amortization**: Day-weighted straight-line with exact penny reconciliation
 - **PDF Generation**: Professional reports using reportlab with table formatting
 - **Configuration Management**: Central config file for easy customization
 - **Data Persistence**: CSV-based storage with complete audit trails
 - **Error Handling**: Validates required SOFR rates, ownership percentages, and data integrity
 - **Comprehensive Testing**: Full test coverage for calculations and allocations
-
-## Testing
-
-**Run all tests:**
-```bash
-python test_loan_system.py       # Loan calculations
-python test_investor_system.py   # Investor allocations
-python test_config.py            # Configuration integration
-```
-
-**Run demo workflow:**
-```bash
-bash demo_investor_workflow.sh
-```
 
 ## Use Cases
 
@@ -521,34 +603,43 @@ This system addresses real-world challenges in private credit fund operations:
 4. **Rate Compliance**: Ensures contractually specified CME SOFR rates are used
 5. **Audit Trail**: Maintains complete history of rates, payments, and ownership
 6. **Month-End Close**: Streamlines period-end reporting workflow
-7. **Regulatory Compliance**: Provides documentation for auditors and regulators
+7. **Distribution Notices**: Documents interim and supplemental cash distributions
+8. **OID Accounting**: Tracks and amortizes original issue discount per loan period
+9. **Regulatory Compliance**: Provides documentation for auditors and regulators
 
 ## Roadmap
 
-### ✅ v1.5 (Current Release)
+### ✅ v1.6 (Current Release)
+- [x] Distribution notices — Interim and Supplemental (text + PDF)
+- [x] OID (Original Issue Discount) amortization with funding waterfall
+- [x] Loan persistence (`loan_storage.py`) with append-only audit history
+- [x] Period end convention option (last business day vs. calendar month end)
+- [x] Rate precision diagnostic tool (`diagnose_rates.py`)
+
+### ✅ v1.5
 - [x] Fee tracking and allocation (prepayment, amendment, exit, waiver, default interest)
 - [x] Point-in-time fee allocation to investors
-- [x] Default interest calculator for negotiations
 - [x] Fee reporting in investor statements and audit reports
 
-### v1.6 (Next Release)
+### ✅ v1.4
+- [x] Multi-investor ownership tracking with time-based changes
+- [x] Pro-rata allocation engine with day-weighting
+- [x] PDF investor statements and Excel audit reports
+
+### Future Enhancements
 - [ ] Automated PDF generation via CLI
 - [ ] PIK fee capitalization
 - [ ] Email distribution integration
-- [ ] Distribution notices (separate from loan admin memos)
-
-### Future Enhancements
 - [ ] Prepayment penalties and make-whole calculations
-- [ ] OID (Original Issue Discount) amortization
 - [ ] Delinquency reporting and aging
 - [ ] Journal entry generation for GL posting
 - [ ] Multi-loan portfolio dashboard
 - [ ] Web-based interface
 - [ ] Database backend for production scale
-- [ ] API for external system integration
 
 ## Version History
 
+- **v1.6** (May 2026): Distribution notices, OID amortization, loan persistence, rate diagnostics
 - **v1.5** (Feb 2026): Fee management system
 - **v1.4** (Jan 2026): Investor management, allocation engine, PDF reports
 - **v1.3** (Jan 2026): Payment tracking, principal prepayments
@@ -558,17 +649,11 @@ This system addresses real-world challenges in private credit fund operations:
 
 ## Documentation
 
-- **Process Guide**: See `PROCESS_GUIDE.md` (coming soon) for complete workflow documentation
+- **Process Guide**: See `PROCESS_GUIDE.md` for non-technical user walkthrough (Windows/PowerShell)
+- **Loan Walkthrough**: See `WALKTHROUGH.md` for complete 8-period lifecycle example (bash)
+- **PowerShell Walkthrough**: See `WALKTHROUGH_POWERSHELL.md` for Windows-adapted version
 - **Configuration**: Review `config.py` for all customization options
 - **CLI Reference**: Run `python cli.py --help` for command documentation
-- **API Documentation**: See individual module docstrings
-
-## Support & Contributing
-
-For issues, questions, or contributions:
-- Review test files for usage examples
-- Check demo workflow script for complete scenarios
-- See troubleshooting section in process guide
 
 ## Author
 
@@ -577,7 +662,3 @@ Built by Phillip L Delatorre Jr. as part of exploring AI/ML, business automation
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-- **v1.4** (Jan 2026): Investor management, pro-rata allocation, PDF reports (reportlab), Excel audit reports

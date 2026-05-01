@@ -30,8 +30,8 @@ loan = Loan(
 
 # Add investors
 print("\n1. Adding investors...")
-add_investor("FEE-TEST", "INV-A", "Investor A LLC", 40.0, datetime(2025, 1, 1))
-add_investor("FEE-TEST", "INV-B", "Investor B Fund", 60.0, datetime(2025, 1, 1))
+add_investor("FEE-TEST", "INV-A", "Investor A LLC", "Inv-A", 40.0, datetime(2025, 1, 1))
+add_investor("FEE-TEST", "INV-B", "Investor B Fund", "Inv-B", 60.0, datetime(2025, 1, 1))
 
 # Add fees to Period 2
 print("\n2. Adding fees...")

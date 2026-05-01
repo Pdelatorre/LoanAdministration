@@ -47,19 +47,31 @@ def generate_investor_statement_pdf(
     if not investor:
         raise ValueError(f"Investor {investor_id} not found in allocation data")
     
-    # Get ownership percentage
-    last_segment = allocation_data['ownership_segments'][-1]
-    investor_ownership = next(
-        (inv['ownership_pct'] for inv in last_segment['investors'] 
-         if inv['investor_id'] == investor_id),
-        0.0
-    )
-    
+    # Get investor's active segments (ownership > 0%) for this period
+    investor_segments = [
+        seg for seg in investor.get('segments', [])
+        if seg['ownership_pct'] > 0
+    ]
+
     # Format dates
     period_start = allocation_data['period_start'].strftime('%B %d, %Y')
     period_end = allocation_data['period_end'].strftime('%B %d, %Y')
     effective_date = allocation_data['period_end'].strftime('%m/%d/%Y')
-    
+
+    # OID values — prorated to this investor by their interest share
+    period_oid = period_data.get('period_oid', 0.0)
+    total_period_interest = period_data.get('interest_owed', 0.0)
+    oid_unamortized_start = period_data.get('oid_unamortized_start', 0.0)
+    if period_oid > 0 and total_period_interest > 0:
+        ownership_ratio = investor['interest'] / total_period_interest
+        investor_oid = round(period_oid * ownership_ratio, 2)
+        investor_oid_beginning = round(oid_unamortized_start * ownership_ratio, 2)
+        investor_oid_ending = round(investor_oid_beginning - investor_oid, 2)
+    else:
+        investor_oid = 0.0
+        investor_oid_beginning = 0.0
+        investor_oid_ending = 0.0
+
     # Create PDF
     doc = SimpleDocTemplate(output_path, pagesize=letter,
                           topMargin=0.75*inch, bottomMargin=0.75*inch,
@@ -120,8 +132,7 @@ def generate_investor_statement_pdf(
     # Loan Info
     loan_info = f"""
     <b>Loan:</b> {loan_name}<br/>
-    <b>Period:</b> {period_start} - {period_end}<br/>
-    <b>Your Ownership:</b> {investor_ownership:.2f}%
+    <b>Period:</b> {period_start} - {period_end}
     """
     elements.append(Paragraph(loan_info, normal_style))
     elements.append(Spacer(1, 0.2*inch))
@@ -129,28 +140,41 @@ def generate_investor_statement_pdf(
     # Total Loan Activity Section
     elements.append(Paragraph("TOTAL LOAN ACTIVITY", heading_style))
     
-    loan_table_data = [
-        ['Effective\nDate', 'Beginning\nPrincipal', 'Interest\nIncome', 'Ending\nPrincipal'],
-        [
-            effective_date,
-            f"${period_data['principal_beginning']:,.2f}",
-            f"${period_data['interest_owed']:,.2f}",
-            f"${period_data['principal_ending']:,.2f}"
+    if period_oid > 0:
+        loan_table_data = [
+            ['Effective\nDate', 'Beginning\nPrincipal', 'Interest\nIncome', 'OID\nAmortized', 'Ending\nPrincipal'],
+            [
+                effective_date,
+                f"${period_data['principal_beginning']:,.2f}",
+                f"${period_data['interest_owed']:,.2f}",
+                f"${period_oid:,.2f}",
+                f"${period_data['principal_ending']:,.2f}"
+            ]
         ]
-    ]
-    
+    else:
+        loan_table_data = [
+            ['Effective\nDate', 'Beginning\nPrincipal', 'Interest\nIncome', 'Ending\nPrincipal'],
+            [
+                effective_date,
+                f"${period_data['principal_beginning']:,.2f}",
+                f"${period_data['interest_owed']:,.2f}",
+                f"${period_data['principal_ending']:,.2f}"
+            ]
+        ]
+
     # Add prepayment rows if exist
     if period_data.get('prepayments'):
         for pp in period_data['prepayments']:
             pp_date = pp['payment_date'].strftime('%m/%d/%Y')
-            loan_table_data.append([
-                f"{pp_date} - Principal Prepayment",
-                '',
-                '',
-                f"(${pp['amount']:,.2f})"
-            ])
-    
-    loan_table = Table(loan_table_data, colWidths=[1.2*inch, 1.8*inch, 1.5*inch, 1.9*inch])
+            if period_oid > 0:
+                loan_table_data.append([f"{pp_date} - Principal Prepayment", '', '', '', f"(${pp['amount']:,.2f})"])
+            else:
+                loan_table_data.append([f"{pp_date} - Principal Prepayment", '', '', f"(${pp['amount']:,.2f})"])
+
+    if period_oid > 0:
+        loan_table = Table(loan_table_data, colWidths=[1.0*inch, 1.5*inch, 1.3*inch, 1.2*inch, 1.5*inch])
+    else:
+        loan_table = Table(loan_table_data, colWidths=[1.2*inch, 1.8*inch, 1.5*inch, 1.9*inch])
     loan_table.setStyle(TableStyle([
         # Header row - bold with underline
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -172,122 +196,164 @@ def generate_investor_statement_pdf(
     elements.append(loan_table)
     elements.append(Spacer(1, 0.2*inch))
     
-    # Your Allocation Section
-    elements.append(Paragraph(f"YOUR ALLOCATION ({investor_ownership:.2f}%)", heading_style))
-    
-    investor_table_data = [
-        ['Effective\nDate', 'Beginning\nPrincipal', 'Interest\nIncome', 'Ending\nPrincipal'],
-        [
-            effective_date,
-            f"${investor['principal_beginning']:,.2f}",
+    # Your Allocation Section — per-segment rows
+    elements.append(Paragraph("YOUR ALLOCATION", heading_style))
+
+    multi_segment = len(investor_segments) > 1
+
+    # Header row
+    alloc_table_data = [['Segment Dates', 'Ownership', 'Interest\nIncome']]
+
+    for seg in investor_segments:
+        seg_label = (f"{seg['start_date'].strftime('%m/%d/%Y')} - "
+                     f"{seg['end_date'].strftime('%m/%d/%Y')}")
+        alloc_table_data.append([
+            seg_label,
+            f"{seg['ownership_pct']:.2f}%",
+            f"${seg['interest']:,.2f}",
+        ])
+
+    # Total row if multiple segments
+    if multi_segment:
+        alloc_table_data.append([
+            'Total Interest Income',
+            '',
             f"${investor['interest']:,.2f}",
-            f"${investor['principal_ending']:,.2f}"
-        ]
-    ]
-    
-    # Add investor prepayment rows if exist
-    if investor['principal_prepayment'] > 0:
-        if period_data.get('prepayments'):
-            for pp in period_data['prepayments']:
-                pp_date = pp['payment_date'].strftime('%m/%d/%Y')
-                investor_pp = investor['principal_prepayment']
-                investor_table_data.append([
-                    f"{pp_date} - Principal Prepayment",
-                    '',
-                    '',
-                    f"(${investor_pp:,.2f})"
-                ])
-    
-    investor_table = Table(investor_table_data, colWidths=[1.2*inch, 1.8*inch, 1.5*inch, 1.9*inch])
-    investor_table.setStyle(TableStyle([
-        # Header row - bold with underline
+        ])
+
+    alloc_table = Table(alloc_table_data, colWidths=[3.0*inch, 1.2*inch, 1.5*inch])
+    alloc_style_cmds = [
+        # Header
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 9),
         ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
         ('LINEBELOW', (0, 0), (-1, 0), 1, colors.black),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
         ('TOPPADDING', (0, 0), (-1, 0), 8),
-        
-        # Data rows - clean, no lines
+        # Data rows
         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('ALIGN', (0, 1), (-1, -1), 'CENTER'),
+        ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+        ('ALIGN', (0, 1), (0, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 1), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
-    ]))
-    
-    elements.append(investor_table)
-    elements.append(Spacer(1, 0.2*inch))
-    
-    # ADDITIONAL INCOME - Dynamic fee loading
-    from fee_allocation import calculate_investor_fee_totals
+        ('TOPPADDING', (0, 1), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
+    ]
+    if multi_segment:
+        # Bold total row and put a line above it
+        total_row_idx = len(alloc_table_data) - 1
+        alloc_style_cmds += [
+            ('FONTNAME', (0, total_row_idx), (-1, total_row_idx), 'Helvetica-Bold'),
+            ('LINEABOVE', (0, total_row_idx), (-1, total_row_idx), 0.5, colors.black),
+        ]
+    alloc_table.setStyle(TableStyle(alloc_style_cmds))
 
+    elements.append(alloc_table)
+    elements.append(Spacer(1, 0.1*inch))
+
+    # Principal summary below segment table
+    # Only show prepayment row if investor still held ownership at period end (not exited)
+    last_seg_pct = investor['segments'][-1]['ownership_pct'] if investor.get('segments') else 0
+    principal_data = [
+        ['Beginning Principal Balance:', f"${investor['principal_beginning']:,.2f}"],
+    ]
+    if investor['principal_prepayment'] > 0 and last_seg_pct > 0:
+        if period_data.get('prepayments'):
+            for pp in period_data['prepayments']:
+                pp_date = pp['payment_date'].strftime('%m/%d/%Y')
+                principal_data.append([
+                    f"Principal Prepayment ({pp_date}):",
+                    f"(${investor['principal_prepayment']:,.2f})"
+                ])
+    principal_data.append(['Ending Principal Balance:', f"${investor['principal_ending']:,.2f}"])
+
+    principal_table = Table(principal_data, colWidths=[3.5*inch, 2.0*inch])
+    principal_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(principal_table)
+
+    # OID Balance section — only shown when loan has OID
+    if investor_oid > 0:
+        elements.append(Spacer(1, 0.15*inch))
+        elements.append(Paragraph("OID BALANCE", heading_style))
+        oid_data = [
+            ['Unamortized OID — Beginning:', f"(${investor_oid_beginning:,.2f})"],
+            ['OID Amortized This Period:', f"${investor_oid:,.2f}"],
+            ['Unamortized OID — Ending:', f"(${investor_oid_ending:,.2f})"],
+        ]
+        oid_table = Table(oid_data, colWidths=[3.5*inch, 2.0*inch])
+        oid_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ]))
+        elements.append(oid_table)
+
+    elements.append(Spacer(1, 0.2*inch))
+
+    # Load fees — merged into Income Summary below (no separate Additional Income section)
+    from fee_allocation import calculate_investor_fee_totals
     try:
         investor_fees = calculate_investor_fee_totals(
-            loan_id, 
-            period_data['period_number'], 
+            loan_id,
+            period_data['period_number'],
             investor_id
         )
-        
-        if investor_fees['total_fees'] > 0:
-            elements.append(Paragraph("ADDITIONAL INCOME", heading_style))
-            
-            fee_data = []
-            
-            # Add each fee type with date
-            for detail in investor_fees['fee_details']:
-                fee_label = f"{detail['display_name']} ({detail['fee_date'].strftime('%b %d')}):"
-                fee_data.append([fee_label, f"${detail['investor_share']:,.2f}"])
-            
-            # Total additional income
-            fee_data.append(['Total Additional Income:', f"${investor_fees['total_fees']:,.2f}"])
-            
-            fee_table = Table(fee_data, colWidths=[4.5*inch, 2*inch])
-            fee_table.setStyle(TableStyle([
-                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-                ('LINEABOVE', (0, -1), (-1, -1), 1, colors.black),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 4),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ]))
-            
-            elements.append(fee_table)
-            elements.append(Spacer(1, 0.2*inch))
-            
-            # Store for income summary
-            total_additional = investor_fees['total_fees']
-        else:
-            total_additional = 0.00
+        fee_details = investor_fees['fee_details'] if investor_fees['total_fees'] > 0 else []
+        total_fees  = investor_fees['total_fees']
     except:
-        # No fees for this period or fee system not available
-        total_additional = 0.00
-    
-    # INCOME SUMMARY
+        fee_details = []
+        total_fees  = 0.00
+
+    # INCOME SUMMARY — interest breakout + fees inline + grand total
     elements.append(Paragraph("INCOME SUMMARY", heading_style))
 
-    summary_data = [
-        ['Interest Income:', f"${investor['interest']:,.2f}"]
-    ]
+    pik_interest  = investor.get('pik_interest',  0.0)
+    cash_interest = investor.get('cash_interest', investor['interest'])
+    is_pik_period = period_data.get('pik_elected', False)
 
-    # Add additional income if exists
-    if total_additional > 0:
-        summary_data.append(['Additional Income:', f"${total_additional:,.2f}"])
+    summary_data = []
 
-    # Total income earned
-    total_income = investor['interest'] + total_additional
+    if is_pik_period:
+        summary_data.append(['Cash Interest:', f"${cash_interest:,.2f}"])
+        summary_data.append(['PIK Interest (capitalized to balance):', f"${pik_interest:,.2f}"])
+        summary_data.append(['Total Interest Income:', f"${investor['interest']:,.2f}"])
+    else:
+        summary_data.append(['Interest Income:', f"${investor['interest']:,.2f}"])
+
+    # Each fee on its own line with date — no separate section header
+    for detail in fee_details:
+        fee_label = f"{detail['display_name']} ({detail['fee_date'].strftime('%b %d')}):"
+        summary_data.append([fee_label, f"${detail['investor_share']:,.2f}"])
+
+    # Grand total
+    total_income = investor['interest'] + total_fees
     summary_data.append(['Total Income Earned:', f"${total_income:,.2f}"])
 
+    # Style: bold + line above grand total row; if PIK, also bold+underline interest subtotal
     summary_table = Table(summary_data, colWidths=[4.5*inch, 2*inch])
-    summary_table.setStyle(TableStyle([
+    table_style_cmds = [
         ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
         ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
         ('LINEABOVE', (0, -1), (-1, -1), 1, colors.black),
         ('FONTSIZE', (0, 0), (-1, -1), 10),
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-    ]))
+    ]
+    if is_pik_period:
+        # Bold + thin line above the interest subtotal row (index 2)
+        table_style_cmds += [
+            ('FONTNAME', (0, 2), (-1, 2), 'Helvetica-Bold'),
+            ('LINEABOVE', (0, 2), (-1, 2), 0.5, colors.black),
+        ]
+    summary_table.setStyle(TableStyle(table_style_cmds))
 
     elements.append(summary_table)
 
@@ -319,11 +385,21 @@ def generate_all_investor_pdfs(
     filepaths = []
     
     for investor in allocation_data['investor_allocations']:
+        # Skip investors with no active (>0%) segments this period
+        active_segments = [
+            seg for seg in investor.get('segments', [])
+            if seg['ownership_pct'] > 0
+        ]
+        if not active_segments:
+            investor_short = investor.get('investor_short_name', investor['investor_id'])
+            print(f"⏭️  Skipped PDF for {investor_short} — no ownership this period")
+            continue
+
         period_num = allocation_data['period_number']
         investor_short = investor.get('investor_short_name', investor['investor_id'])
         filename = f"{loan.loan_name}_Period{period_num}_{investor_short}.pdf"
         filepath = os.path.join(output_dir, filename)
-        
+
         generate_investor_statement_pdf(
             loan_id=loan.loan_id,
             loan_name=loan.loan_name,
@@ -333,7 +409,7 @@ def generate_all_investor_pdfs(
             output_path=filepath,
             company_name=company_name
         )
-        
+
         filepaths.append(filepath)
         print(f"✅ Generated PDF: {filename}")
     

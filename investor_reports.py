@@ -40,19 +40,31 @@ def generate_investor_statement(
     if not investor:
         raise ValueError(f"Investor {investor_id} not found in allocation data")
     
-    # Get ownership percentage (from last segment for simplicity)
-    last_segment = allocation_data['ownership_segments'][-1]
-    investor_ownership = next(
-        (inv['ownership_pct'] for inv in last_segment['investors'] 
-         if inv['investor_id'] == investor_id),
-        0.0
-    )
-    
+    # Get investor's active segments (ownership > 0%) for this period
+    investor_segments = [
+        seg for seg in investor.get('segments', [])
+        if seg['ownership_pct'] > 0
+    ]
+
     # Format dates
     period_start = allocation_data['period_start'].strftime('%B %d, %Y')
     period_end = allocation_data['period_end'].strftime('%B %d, %Y')
     effective_date = allocation_data['period_end'].strftime('%m/%d/%Y')
-    
+
+    # OID values — prorated to this investor by their interest share
+    period_oid = period_data.get('period_oid', 0.0)
+    total_period_interest = period_data.get('interest_owed', 0.0)
+    oid_unamortized_start = period_data.get('oid_unamortized_start', 0.0)
+    if period_oid > 0 and total_period_interest > 0:
+        ownership_ratio = investor['interest'] / total_period_interest
+        investor_oid = round(period_oid * ownership_ratio, 2)
+        investor_oid_beginning = round(oid_unamortized_start * ownership_ratio, 2)
+        investor_oid_ending = round(investor_oid_beginning - investor_oid, 2)
+    else:
+        investor_oid = 0.0
+        investor_oid_beginning = 0.0
+        investor_oid_ending = 0.0
+
     # Build report
     report = f"""
 ┌─────────────────────────────────────────────────────────────┐
@@ -64,90 +76,123 @@ def generate_investor_statement(
 
 Loan: {loan_name}
 Period: {period_start} - {period_end}
-Your Ownership: {investor_ownership:.2f}%
 
 ─────────────────────────────────────────────────────────────
 
 TOTAL LOAN ACTIVITY
 
-Effective    Beginning         Interest          Ending
-Date         Principal         Income            Principal
-             Balance                             Balance
-─────────────────────────────────────────────────────────────
-{effective_date:<12} ${period_data['principal_beginning']:>14,.2f}  ${period_data['interest_owed']:>10,.2f}                 ${period_data['principal_ending']:>14,.2f}
 """
-    
+    if period_oid > 0:
+        report += (
+            "Effective    Beginning         Interest     OID          Ending\n"
+            "Date         Principal         Income       Amortized    Principal\n"
+            "             Balance                                     Balance\n"
+            "─────────────────────────────────────────────────────────────\n"
+            f"{effective_date:<12} ${period_data['principal_beginning']:>14,.2f}  "
+            f"${period_data['interest_owed']:>10,.2f}  ${period_oid:>10,.2f}  "
+            f"${period_data['principal_ending']:>14,.2f}\n"
+        )
+    else:
+        report += (
+            "Effective    Beginning         Interest          Ending\n"
+            "Date         Principal         Income            Principal\n"
+            "             Balance                             Balance\n"
+            "─────────────────────────────────────────────────────────────\n"
+            f"{effective_date:<12} ${period_data['principal_beginning']:>14,.2f}  "
+            f"${period_data['interest_owed']:>10,.2f}                 "
+            f"${period_data['principal_ending']:>14,.2f}\n"
+        )
+    report += "\n"
+
     # Add prepayment activity if exists
     if period_data.get('prepayments'):
         report += "\n  Activity During Period:\n"
         for pp in period_data['prepayments']:
             pp_date = pp['payment_date'].strftime('%m/%d/%Y')
             report += f"    {pp_date} - Principal Prepayment      (${ pp['amount']:>12,.2f})\n"
-    
+
+    # YOUR ALLOCATION section — per-segment rows
+    multi_segment = len(investor_segments) > 1
     report += f"""
 ─────────────────────────────────────────────────────────────
 
-YOUR ALLOCATION ({investor_ownership:.2f}%)
+YOUR ALLOCATION
 
-Effective    Beginning         Interest          Ending
-Date         Principal         Income            Principal
-             Balance                          Balance
+Segment Dates               Ownership   Interest Income
 ─────────────────────────────────────────────────────────────
-{effective_date:<12} ${investor['principal_beginning']:>14,.2f}  ${investor['interest']:>10,.2f}                 ${investor['principal_ending']:>14,.2f}
 """
-    
-    # Add investor's share of prepayments
-    if investor['principal_prepayment'] > 0:
-        report += "\n  Your Share of Activity:\n"
+    for seg in investor_segments:
+        seg_start = seg['start_date'].strftime('%m/%d/%Y')
+        seg_end   = seg['end_date'].strftime('%m/%d/%Y')
+        report += f"{seg_start} - {seg_end}   {seg['ownership_pct']:>6.2f}%   ${seg['interest']:>12,.2f}\n"
+
+    if multi_segment:
+        report += f"{'':45} {'─' * 16}\n"
+        report += f"{'Total Interest Income':45} ${investor['interest']:>12,.2f}\n"
+
+    report += f"\n"
+    report += f"{'Beginning Principal Balance:':45} ${investor['principal_beginning']:>12,.2f}\n"
+
+    # Only show prepayment row if investor held ownership at period end (not exited).
+    # Check the final segment's ownership — 0% means the investor exited mid-period.
+    last_seg_pct = investor['segments'][-1]['ownership_pct'] if investor.get('segments') else 0
+    if investor['principal_prepayment'] > 0 and last_seg_pct > 0:
         if period_data.get('prepayments'):
             for pp in period_data['prepayments']:
                 pp_date = pp['payment_date'].strftime('%m/%d/%Y')
                 investor_pp = investor['principal_prepayment']
-                report += f"    {pp_date} - Principal Prepayment      (${ investor_pp:>12,.2f})\n"
-    
-    # ADDITIONAL INCOME section (only show if fees exist)
+                report += f"{'  Principal Prepayment (' + pp_date + '):':45} (${ investor_pp:>11,.2f})\n"
+
+    report += f"{'Ending Principal Balance:':45} ${investor['principal_ending']:>12,.2f}\n"
+
+    # OID Balance section — only shown when loan has OID
+    if investor_oid > 0:
+        report += "\n─────────────────────────────────────────────────────────────\n\n"
+        report += "OID BALANCE\n\n"
+        report += f"{'Unamortized OID — Beginning:':45} (${investor_oid_beginning:,.2f})\n"
+        report += f"{'OID Amortized This Period:':45}   ${investor_oid:,.2f}\n"
+        report += f"{'Unamortized OID — Ending:':45} (${investor_oid_ending:,.2f})\n"
+
+    # Load fees for this period — will be merged into Income Summary below
     from fee_allocation import calculate_investor_fee_totals
-    
     try:
         investor_fees = calculate_investor_fee_totals(
-            loan_id, 
-            period_data['period_number'], 
+            loan_id,
+            period_data['period_number'],
             investor_id
         )
-        
-        if investor_fees['total_fees'] > 0:
-            report += f"""
-─────────────────────────────────────────────────────────────
-
-ADDITIONAL INCOME
-"""
-            for detail in investor_fees['fee_details']:
-                fee_label = f"{detail['display_name']} ({detail['fee_date'].strftime('%b %d')}):"
-                report += f"\n{fee_label:45} ${detail['investor_share']:>12,.2f}"
-            
-            report += f"\n{'':<45} {'─' * 16}"
-            report += f"\nTotal Additional Income:{'':<21} ${investor_fees['total_fees']:>12,.2f}\n"
-            
-            total_additional = investor_fees['total_fees']
-        else:
-            total_additional = 0.00
+        fee_details   = investor_fees['fee_details'] if investor_fees['total_fees'] > 0 else []
+        total_fees    = investor_fees['total_fees']
     except:
-        total_additional = 0.00
-    
-    # INCOME SUMMARY
+        fee_details   = []
+        total_fees    = 0.00
+
+    # INCOME SUMMARY — interest breakout + fees + grand total
+    pik_interest  = investor.get('pik_interest',  0.0)
+    cash_interest = investor.get('cash_interest', investor['interest'])
+    is_pik_period = period_data.get('pik_elected', False)
+
     report += f"""
 ─────────────────────────────────────────────────────────────
 
 INCOME SUMMARY
 
-Interest Income:{'':<33} ${investor['interest']:>12,.2f}
 """
-    
-    if total_additional > 0:
-        report += f"Additional Income:{'':<29} ${total_additional:>12,.2f}\n"
-        report += f"{'':<45} {'─' * 16}\n"
-    
-    total_income = investor['interest'] + total_additional
+    if is_pik_period:
+        report += f"Cash Interest:{'':<35} ${cash_interest:>12,.2f}\n"
+        report += f"PIK Interest (capitalized to balance):{'':<11} ${pik_interest:>12,.2f}\n"
+        report += f"{'':45} {'─' * 16}\n"
+        report += f"Total Interest Income:{'':<27} ${investor['interest']:>12,.2f}\n"
+    else:
+        report += f"Interest Income:{'':<33} ${investor['interest']:>12,.2f}\n"
+
+    # Fees inline — each on its own line with date
+    for detail in fee_details:
+        fee_label = f"{detail['display_name']} ({detail['fee_date'].strftime('%b %d')}):"
+        report += f"{fee_label:45} ${detail['investor_share']:>12,.2f}\n"
+
+    report += f"{'':45} {'─' * 16}\n"
+    total_income = investor['interest'] + total_fees
     report += f"Total Income Earned:{'':<25} ${total_income:>12,.2f}\n"
     report += "\n─────────────────────────────────────────────────────────────\n"
     
@@ -186,6 +231,15 @@ def generate_all_investor_statements_for_loan(
     filepaths = []
     
     for investor in allocation_data['investor_allocations']:
+        # Skip investors with no active (>0%) segments this period
+        active_segments = [
+            seg for seg in investor.get('segments', [])
+            if seg['ownership_pct'] > 0
+        ]
+        if not active_segments:
+            print(f"⏭️  Skipped {investor['investor_short_name']} — no ownership this period")
+            continue
+
         report = generate_investor_statement(
             loan_id=loan.loan_id,
             loan_name=loan.loan_name,
@@ -194,15 +248,15 @@ def generate_all_investor_statements_for_loan(
             investor_id=investor['investor_id'],
             company_name=company_name
         )
-        
+
         # Save to file
         period_num = allocation_data['period_number']
         filename = f"{loan.loan_name}_Period{period_num}_{investor['investor_short_name']}.txt"
         filepath = os.path.join(output_dir, filename)
-        
-        with open(filepath, 'w') as f:
+
+        with open(filepath, 'w', encoding='utf-8') as f:
             f.write(report)
-        
+
         filepaths.append(filepath)
         print(f"✅ Generated report: {filename}")
     

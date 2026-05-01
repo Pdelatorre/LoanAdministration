@@ -23,6 +23,8 @@ DEFAULT_OUTPUT_DIR = "output"
 INVESTOR_REPORTS_DIR = "output/investor_reports"
 INVESTOR_REPORTS_PDF_DIR = "output/investor_reports_pdf"
 AUDIT_REPORTS_DIR = "output/audit_reports"
+DISTRIBUTION_NOTICES_DIR = "output/distribution_notices"
+DISTRIBUTION_NOTICES_PDF_DIR = "output/distribution_notices_pdf"
 
 # Data Storage
 DATA_DIR = "data"
@@ -45,6 +47,7 @@ REPORT_BORDER_COLOR = "#333333"
 SOFR_RESET_BUSINESS_DAYS = 2  # Days before period start to get SOFR rate
 DEFAULT_SOFR_FLOOR = 0.0
 DEFAULT_SOFR_CEILING = float('inf')
+STATEMENT_HOLD_DAYS = 1  # Business days after period close before statements can be issued (0 to disable)
 
 # System Settings
 DEBUG_MODE = False

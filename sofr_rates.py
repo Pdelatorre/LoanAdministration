@@ -43,32 +43,51 @@ def add_sofr_rate(
         filepath: Path to the CSV file
         source: Source of the rate (default "CME")
     """
-    # Read existing rates to check for duplicates
+    # Read existing rates
     existing_rates = load_sofr_rates(filepath)
-    
-    if reset_date in existing_rates:
+    is_update = reset_date in existing_rates
+
+    if is_update:
         print(f"Warning: Rate for {reset_date.strftime('%Y-%m-%d')} already exists. Updating...")
-    
+
     # Prepare the new row
     date_added = datetime.now().strftime('%Y-%m-%d')
     new_row = {
         'reset_date': reset_date.strftime('%Y-%m-%d'),
-        'term_sofr_1m': f"{rate:.5f}",  # 5 decimal places
+        'term_sofr_1m': f"{rate:.7f}",
         'source': source,
         'date_added': date_added
     }
-    
-    # Check if file exists and has content
-    file_is_new = not os.path.exists(filepath) or os.path.getsize(filepath) == 0
 
-    with open(filepath, 'a', newline='') as file:
-        fieldnames = ['reset_date', 'term_sofr_1m', 'source', 'date_added']
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        
-        # If file is new/empty, write the header
-        if file_is_new:
+    fieldnames = ['reset_date', 'term_sofr_1m', 'source', 'date_added']
+
+    if is_update:
+        # Rewrite the entire file, replacing the existing row for this date.
+        # This keeps the CSV clean — no duplicate entries accumulate.
+        rows = []
+        try:
+            with open(filepath, 'r', newline='') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    row_date = datetime.strptime(row['reset_date'], "%Y-%m-%d")
+                    if row_date == reset_date:
+                        rows.append(new_row)   # replace old row
+                    else:
+                        rows.append(dict(row))  # keep all other rows
+        except FileNotFoundError:
+            rows = [new_row]
+
+        with open(filepath, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-        
-        # Write the new row
-        writer.writerow(new_row)
-    print(f"Added rate for {reset_date.strftime('%Y-%m-%d')}: {rate:.5f}")
+            writer.writerows(rows)
+    else:
+        # Append new row — no duplicate exists
+        file_is_new = not os.path.exists(filepath) or os.path.getsize(filepath) == 0
+        with open(filepath, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if file_is_new:
+                writer.writeheader()
+            writer.writerow(new_row)
+
+    print(f"Added rate for {reset_date.strftime('%Y-%m-%d')}: {rate * 100:.5f}%")

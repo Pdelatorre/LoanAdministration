@@ -19,9 +19,9 @@ print("=" * 80)
 
 # Add investors for TEST-001
 print("\n1. Adding investors...")
-add_investor("TEST-001", "INV-A", "Investor A LLC", 40.0, datetime(2025, 1, 1))
-add_investor("TEST-001", "INV-B", "Investor B Fund", 35.0, datetime(2025, 1, 1))
-add_investor("TEST-001", "INV-C", "Investor C Capital", 25.0, datetime(2025, 1, 1))
+add_investor("TEST-001", "INV-A", "Investor A LLC", "Inv-A", 40.0, datetime(2025, 1, 1))
+add_investor("TEST-001", "INV-B", "Investor B Fund", "Inv-B", 35.0, datetime(2025, 1, 1))
+add_investor("TEST-001", "INV-C", "Investor C Capital", "Inv-C", 25.0, datetime(2025, 1, 1))
 
 # Add fees
 print("\n2. Adding fees...")

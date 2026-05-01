@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Dict, List
 from fees import load_fees, get_fee_display_name
 from investors import _get_investors_at_date
+from interest_calculations import penny_round
 
 
 def allocate_fee_to_investors(
@@ -52,21 +53,22 @@ def allocate_fee_to_investors(
     if abs(total_ownership - 100.0) > 0.01:
         raise ValueError(f"Ownership percentages sum to {total_ownership}%, not 100%")
     
-    # Allocate fee based on ownership percentages
+    # Compute precise (unrounded) shares then apply Largest Remainder Method
+    # so every investor's share is to the penny and they sum to fee_amount exactly.
+    precise_shares = [fee_amount * (inv['ownership_pct'] / 100.0) for inv in investors]
+    rounded_shares = penny_round(fee_amount, precise_shares)
+
     allocations = []
-    total_allocated = 0.0
-    
-    for inv in investors:
-        fee_share = fee_amount * (inv['ownership_pct'] / 100.0)
+    for inv, fee_share in zip(investors, rounded_shares):
         allocations.append({
             'investor_id': inv['investor_id'],
             'investor_name': inv['investor_name'],
             'ownership_pct': inv['ownership_pct'],
             'fee_share': fee_share
         })
-        total_allocated += fee_share
-    
-    # Validation: ensure total allocated equals fee amount (within rounding)
+
+    # Sanity check — should always pass after penny_round; kept as a hard guard
+    total_allocated = sum(a['fee_share'] for a in allocations)
     if abs(total_allocated - fee_amount) > 0.01:
         raise ValueError(f"Allocation error: ${total_allocated:.2f} allocated vs ${fee_amount:.2f} fee")
     

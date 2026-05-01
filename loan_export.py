@@ -4,12 +4,15 @@ from typing import List, Dict
 
 
 def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict = None) -> None:
+    # Detect OID from loan_info (set by CLI when oid_amount > 0)
+    has_oid = bool(loan_info and loan_info.get('oid_amount', 0) > 0)
+
     with open(filepath, 'w', newline='') as file:
         # Define columns for export
         fieldnames = [
             'period_number',
             'start_date',
-            'end_date', 
+            'end_date',
             'payment_due_date',
             'days',
             'sofr_reset_date',
@@ -17,6 +20,11 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
             'effective_rate',
             'principal_beginning',
             'interest_owed',
+        ]
+        if has_oid:
+            fieldnames.append('period_oid')
+            fieldnames.append('oid_unamortized_end')
+        fieldnames += [
             'prepaid_balance_start',
             'prepaid_applied',
             'prepaid_balance_end',
@@ -25,21 +33,34 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
             'cash_due',
             'principal_ending',
         ]
-        
+
         writer = csv.DictWriter(file, fieldnames=fieldnames)
-        
+
         # Write header row with loan info if provided
         if loan_info:
             # Write loan info as comments
             file.write(f"# Loan ID: {loan_info.get('loan_id', 'N/A')}\n")
             file.write(f"# Borrower: {loan_info.get('borrower', 'N/A')}\n")
-            file.write(f"# Principal: ${loan_info.get('principal', 0):,.2f}\n")
+            file.write(f"# Principal: ${loan_info.get('principal', 0):.0f}\n")
+            file.write(f"# Margin: {loan_info.get('margin', 0):.5f}%\n")
+            if has_oid:
+                from oid_calculations import compute_net_investor_call, compute_net_borrower_advance
+                oid_amt  = loan_info.get('oid_amount', 0)
+                expenses = loan_info.get('closing_expenses', 0)
+                prepaid  = loan_info.get('interest_prepayment', 0)
+                net_call = compute_net_investor_call(loan_info.get('principal', 0), prepaid, oid_amt)
+                net_adv  = compute_net_borrower_advance(net_call, expenses)
+                file.write(f"# OID Amount: ${oid_amt:.0f}\n")
+                if expenses > 0:
+                    file.write(f"# Closing Expenses: ${expenses:.0f}\n")
+                file.write(f"# Net Investor Call: ${net_call:.0f}\n")
+                file.write(f"# Net Borrower Advance: ${net_adv:.0f}\n")
             file.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             file.write("#\n")
-        
+
         # Write column headers
         writer.writeheader()
-        
+
         # Write data rows
         for entry in schedule:
             # Format the row for export
@@ -50,8 +71,8 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
                 'payment_due_date': entry['payment_due_date'].strftime('%Y-%m-%d'),
                 'days': entry['days'],
                 'sofr_reset_date': entry['sofr_reset_date'].strftime('%Y-%m-%d'),
-                'sofr_rate': f"{entry['sofr_rate']:.5f}",
-                'effective_rate': f"{entry['effective_rate']:.5f}",
+                'sofr_rate': f"{entry['sofr_rate']*100:.5f}",
+                'effective_rate': f"{entry['effective_rate']*100:.5f}",
                 'pik_elected': entry['pik_elected'],
                 'principal_beginning': f"{entry['principal_beginning']:.2f}",
                 'interest_owed': f"{entry['interest_owed']:.2f}",
@@ -62,8 +83,11 @@ def export_schedule_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict 
                 'cash_due': f"{entry['cash_due']:.2f}",
                 'principal_ending': f"{entry['principal_ending']:.2f}"
             }
+            if has_oid:
+                row['period_oid'] = f"{entry.get('period_oid', 0):.2f}"
+                row['oid_unamortized_end'] = f"{entry.get('oid_unamortized_end', 0):.2f}"
             writer.writerow(row)
-    
+
     print(f"Schedule exported to {filepath}")
 
 def export_segment_details_to_csv(schedule: List[Dict], filepath: str, loan_info: Dict = None) -> None:
@@ -128,25 +152,51 @@ def export_segment_details_to_csv(schedule: List[Dict], filepath: str, loan_info
 
 
 def export_schedule_to_text(schedule: List[Dict], filepath: str, loan_info: Dict = None) -> None:
-    with open(filepath, 'w') as file:
+    # Detect OID from loan_info
+    has_oid = bool(loan_info and loan_info.get('oid_amount', 0) > 0)
+
+    with open(filepath, 'w', encoding='utf-8') as file:
         # Write loan info header if provided
         if loan_info:
             file.write(f"Loan ID: {loan_info.get('loan_id', 'N/A')}\n")
             file.write(f"Borrower: {loan_info.get('borrower', 'N/A')}\n")
-            file.write(f"Principal: ${loan_info.get('principal', 0):,.2f}\n")
+            file.write(f"Principal: ${loan_info.get('principal', 0):.0f}\n")
+            file.write(f"Margin: {loan_info.get('margin', 0):.5f}%\n")
+            if has_oid:
+                from oid_calculations import compute_net_investor_call, compute_net_borrower_advance
+                oid_amt  = loan_info.get('oid_amount', 0)
+                expenses = loan_info.get('closing_expenses', 0)
+                prepaid  = loan_info.get('interest_prepayment', 0)
+                net_call = compute_net_investor_call(loan_info.get('principal', 0), prepaid, oid_amt)
+                net_adv  = compute_net_borrower_advance(net_call, expenses)
+                file.write(f"OID Amount: ${oid_amt:,.0f}\n")
+                if expenses > 0:
+                    file.write(f"Closing Expenses: ${expenses:,.0f}\n")
+                file.write(f"Net Investor Call: ${net_call:,.0f}\n")
+                file.write(f"Net Borrower Advance: ${net_adv:,.0f}\n")
             file.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             file.write("\n")
-        
-        # Write schedule header
+
+        # Write schedule header — add OID columns when applicable
+        oid_cols = f" {'Period OID':<15} {'OID Unamortized':<18}" if has_oid else ""
         header = (
             f"{'Period':<6} {'Start Date':<12} {'End Date':<12} {'Payment Date':<14} "
-            f"{'Days':<5} {'SOFR Effective Date':<20} {'SOFR Rate':<10} {'Effective Rate':<15} {'PIK Elected' :<15} {'Principal Beginning' :<20} {'Interest Amount':<15} {'Prepaid Balance Start':<20} {'Prepaid Applied':<20} {'Prepaid Balance End':<20} {'PIK Amount' :<15} {'Cash Due' :<15} {'Principal Ending' :<20}\n"
+            f"{'Days':<5} {'SOFR Effective Date':<20} {'SOFR Rate':<10} {'Effective Rate':<15} {'PIK Elected':<15} "
+            f"{'Principal Beginning':<20} {'Interest Amount':<15}"
+            + oid_cols +
+            f" {'Prepaid Balance Start':<20} {'Prepaid Applied':<20} {'Prepaid Balance End':<20} {'PIK Amount':<15} {'Cash Due':<15} {'Principal Ending':<20}\n"
         )
         file.write(header)
         file.write("=" * len(header) + "\n")
-        
+
         # Write each period's data
         for entry in schedule:
+            oid_str = ""
+            if has_oid:
+                oid_str = (
+                    f" ${entry.get('period_oid', 0):<14,.2f}"
+                    f" ${entry.get('oid_unamortized_end', 0):<17,.2f}"
+                )
             line = (
                 f"{entry['period_number']:<6} "
                 f"{entry['start_date'].strftime('%Y-%m-%d'):<12} "
@@ -158,8 +208,9 @@ def export_schedule_to_text(schedule: List[Dict], filepath: str, loan_info: Dict
                 f"{entry['effective_rate']*100:<15.5f} "
                 f"{'Yes' if entry['pik_elected'] else 'No':<15} "
                 f"${entry['principal_beginning']:<20,.2f} "
-                f"${entry['interest_owed']:<15,.2f} "
-                f"${entry['prepaid_balance_start']:<20,.2f} "
+                f"${entry['interest_owed']:<15,.2f}"
+                + oid_str +
+                f" ${entry['prepaid_balance_start']:<20,.2f} "
                 f"${entry['prepaid_applied']:<20,.2f} "
                 f"${entry['prepaid_balance_end']:<20,.2f} "
                 f"${entry['pik_amount']:<15,.2f} "

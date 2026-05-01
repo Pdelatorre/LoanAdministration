@@ -28,13 +28,13 @@ loan = Loan(
 )
 
 # Add investors
-add_investor("AUDIT-TEST", "INV-A", "Investor A LLC", 40.0, datetime(2025, 1, 1))
-add_investor("AUDIT-TEST", "INV-B", "Investor B Fund", 35.0, datetime(2025, 1, 1))
-add_investor("AUDIT-TEST", "INV-C", "Investor C Capital", 25.0, datetime(2025, 1, 1))
+add_investor("AUDIT-TEST", "INV-A", "Investor A LLC", "Inv-A", 40.0, datetime(2025, 1, 1))
+add_investor("AUDIT-TEST", "INV-B", "Investor B Fund", "Inv-B", 35.0, datetime(2025, 1, 1))
+add_investor("AUDIT-TEST", "INV-C", "Investor C Capital", "Inv-C", 25.0, datetime(2025, 1, 1))
 
 # Ownership change
-add_investor("AUDIT-TEST", "INV-A", "Investor A LLC", 30.0, datetime(2025, 2, 15))
-add_investor("AUDIT-TEST", "INV-D", "Investor D Partners", 10.0, datetime(2025, 2, 15))
+add_investor("AUDIT-TEST", "INV-A", "Investor A LLC", "Inv-A", 30.0, datetime(2025, 2, 15))
+add_investor("AUDIT-TEST", "INV-D", "Investor D Partners", "Inv-D", 10.0, datetime(2025, 2, 15))
 
 print("\n📝 Adding fees...")
 add_fee(

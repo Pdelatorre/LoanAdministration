@@ -42,30 +42,40 @@ def add_pik_election(loan_id: str, period_number: int, pik_elected: bool,
         pik_elected: True for PIK, False for cash
         filepath: Path to CSV file
     """
-    existing_PIK_elections = load_pik_elections(loan_id, filepath)
-
-    if period_number in existing_PIK_elections:
-        print(f"Warning: PIK election for loan {loan_id} period {period_number} already exists. Updating...")
-
-    
+    fieldnames = ['loan_id', 'period_number', 'pik_elected', 'date_added']
     date_added = datetime.now().strftime('%Y-%m-%d')
     new_row = {
         'loan_id': loan_id,
         'period_number': period_number,
         'pik_elected': str(pik_elected),
         'date_added': date_added
-    }   
+    }
 
-    file_is_new = not os.path.exists(filepath) or os.path.getsize(filepath) == 0
+    # Load all existing rows across all loans
+    all_rows = []
+    updated = False
+    try:
+        with open(filepath, 'r', newline='') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if row['loan_id'] == loan_id and int(row['period_number']) == period_number:
+                    # Replace in place — update date_added too
+                    all_rows.append(new_row)
+                    updated = True
+                else:
+                    all_rows.append(row)
+    except FileNotFoundError:
+        pass
 
-    with open(filepath, 'a', newline='') as file:
-        fieldnames = ['loan_id', 'period_number', 'pik_elected', 'date_added']
+    if not updated:
+        all_rows.append(new_row)
+
+    os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
+    with open(filepath, 'w', newline='') as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_rows)
 
-        # If file is new/empty, write the header
-        if file_is_new :
-            writer.writeheader()
-
-        # Write the new row
-        writer.writerow(new_row)
-    print(f"PIK election for loan {loan_id} period {period_number} added/updated.")
+    status = "PIK" if pik_elected else "Cash"
+    action = "Updated" if updated else "Added"
+    print(f"{action}: Loan {loan_id} Period {period_number} → {status}")
