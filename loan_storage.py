@@ -30,6 +30,7 @@ LOAN_FIELDS = [
     "pik_rate",
     "interest_prepayment",
     "oid_amount",
+    "warrant_oid_amount",
     "closing_expenses",
     "status",          # draft | active | closed
     "version",
@@ -76,6 +77,7 @@ def _loan_to_row(loan: Loan) -> Dict:
         "pik_rate":              f"{loan.pik_rate:.7f}",
         "interest_prepayment":   f"{loan.interest_prepayment:.2f}",
         "oid_amount":            f"{loan.oid_amount:.2f}",
+        "warrant_oid_amount":    f"{getattr(loan, 'warrant_oid_amount', 0.0):.2f}",
         "closing_expenses":      f"{loan.closing_expenses:.2f}",
         "status":                getattr(loan, "status", "draft"),
         "version":               getattr(loan, "version", 1),
@@ -105,6 +107,7 @@ def _row_to_loan(row: Dict) -> Loan:
         interest_prepayment=float(row.get("interest_prepayment", 0)),
         oid_amount=float(row.get("oid_amount") or 0),
         closing_expenses=float(row.get("closing_expenses") or 0),
+        warrant_oid_amount=float(row.get("warrant_oid_amount") or 0),
     )
 
     loan.status = row.get("status", "draft")

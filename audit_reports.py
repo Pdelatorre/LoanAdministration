@@ -51,16 +51,19 @@ def generate_audit_report(
     # Tab 3: Investor Allocations
     _create_investor_allocations_tab(wb, loan_id, schedule)
 
-    # Tab 4: Payment Ledger
+    # Tab 4: Investor Roll-Forward
+    _create_investor_roll_forward_tab(wb, loan_id, schedule)
+
+    # Tab 5: Payment Ledger
     _create_payment_ledger_tab(wb, loan_id)
 
-    # Tab 5: Fee Income
+    # Tab 6: Fee Income
     _create_fee_income_tab(wb, loan_id)
 
-    # Tab 6: Ownership History
+    # Tab 7: Ownership History
     _create_ownership_history_tab(wb, loan_id)
 
-    # Tab 7: Reconciliation Checks
+    # Tab 8: Reconciliation Checks
     _create_reconciliation_tab(wb, loan_id, schedule)
     
     # Save workbook
@@ -283,6 +286,338 @@ def _create_investor_allocations_tab(wb, loan_id, schedule):
     # Auto-width columns
     for col in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(col)].width = 18
+
+
+def _create_investor_roll_forward_tab(wb, loan_id, schedule):
+    """
+    Create Investor Roll-Forward tab.
+
+    Accounting-style roll-forward for each investor showing:
+      - Opening principal balance (loan origination)
+      - One row per interest period: period dates, ownership %, cash interest,
+        PIK interest, OID accreted, fees, principal prepayments, ending principal
+      - Running cumulative columns for income, OID, and fees
+      - Subtotal row per investor (bold, shaded)
+      - Grand-total cross-check block at the bottom
+
+    Layout:
+      Col A  Period #
+      Col B  Period Start
+      Col C  Period End
+      Col D  Ownership % (period-end)
+      Col E  Beginning Principal
+      Col F  Cash Interest
+      Col G  PIK Interest
+      Col H  Total Interest Income
+      Col I  OID Accreted          (hidden/zero when no OID on loan)
+      Col J  Fee Income
+      Col K  Total Income
+      Col L  Principal Prepayment
+      Col M  Ending Principal
+      Col N  Cumulative Interest
+      Col O  Cumulative OID         (hidden/zero when no OID)
+      Col P  Cumulative Fees
+      Col Q  Cumulative Total Income
+    """
+    from investor_allocation import allocate_period_to_investors
+    from fee_allocation import calculate_investor_fee_totals
+
+    ws = wb.create_sheet("Investor Roll-Forward")
+
+    # ── Styling helpers ──────────────────────────────────────────────────────
+    BLUE       = "366092"
+    LIGHT_BLUE = "D9E1F2"
+    SUBTOTAL   = "BDD7EE"
+    GRAND_FILL = "1F3864"
+
+    hdr_font   = Font(bold=True, color="FFFFFF", size=10)
+    hdr_fill   = PatternFill(start_color=BLUE,    end_color=BLUE,    fill_type="solid")
+    sub_font   = Font(bold=True, size=10)
+    sub_fill   = PatternFill(start_color=SUBTOTAL, end_color=SUBTOTAL, fill_type="solid")
+    alt_fill   = PatternFill(start_color=LIGHT_BLUE, end_color=LIGHT_BLUE, fill_type="solid")
+    grand_font = Font(bold=True, color="FFFFFF", size=10)
+    grand_fill = PatternFill(start_color=GRAND_FILL, end_color=GRAND_FILL, fill_type="solid")
+
+    CURRENCY = '$#,##0.00'
+    PERCENT  = '0.00%'
+
+    # ── Detect OID ───────────────────────────────────────────────────────────
+    has_oid = any(p.get('period_oid', 0) != 0 for p in schedule)
+
+    # ── Column definitions (label, width) ────────────────────────────────────
+    columns = [
+        ("Period",             9),
+        ("Period Start",      13),
+        ("Period End",        13),
+        ("Ownership %",       12),
+        ("Beg. Principal",    16),
+        ("Cash Interest",     15),
+        ("PIK Interest",      14),
+        ("Total Interest",    15),
+        ("OID Accreted",      14),
+        ("Fee Income",        13),
+        ("Total Income",      14),
+        ("Principal Prepay",  16),
+        ("End. Principal",    16),
+        ("Cumul. Interest",   16),
+        ("Cumul. OID",        13),
+        ("Cumul. Fees",       13),
+        ("Cumul. Total Inc.", 17),
+    ]
+
+    # Column indices (1-based)
+    COL = {label: idx for idx, (label, _) in enumerate(columns, 1)}
+
+    def _set_col_widths():
+        for idx, (_, width) in enumerate(columns, 1):
+            ws.column_dimensions[get_column_letter(idx)].width = width
+
+    def _write_header_row(row):
+        for idx, (label, _) in enumerate(columns, 1):
+            c = ws.cell(row=row, column=idx, value=label)
+            c.font = hdr_font
+            c.fill = hdr_fill
+            c.alignment = Alignment(horizontal="center", wrap_text=True)
+
+    def _fmt_currency(row, col):
+        ws.cell(row=row, column=col).number_format = CURRENCY
+
+    def _fmt_pct(row, col):
+        ws.cell(row=row, column=col).number_format = PERCENT
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    ws.cell(row=1, column=1, value="INVESTOR ROLL-FORWARD — INCOME & BALANCE SUMMARY").font = Font(bold=True, size=13)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
+    ws.row_dimensions[1].height = 20
+
+    # ── Build per-period allocation cache (avoid recomputing per investor) ───
+    period_allocations = []
+    for period in schedule:
+        try:
+            alloc = allocate_period_to_investors(loan_id, period)
+        except Exception:
+            alloc = None
+        period_allocations.append((period, alloc))
+
+    # ── Collect all unique investors (preserve order of first appearance) ────
+    seen = {}
+    for period, alloc in period_allocations:
+        if alloc is None:
+            continue
+        for inv in alloc['investor_allocations']:
+            iid = inv['investor_id']
+            if iid not in seen:
+                seen[iid] = inv['investor_name']
+    all_investor_ids = list(seen.keys())
+
+    if not all_investor_ids:
+        ws.cell(row=3, column=1, value="No investor data available for this loan.")
+        _set_col_widths()
+        return
+
+    # ── Grand-total accumulators ──────────────────────────────────────────────
+    grand = {
+        'cash_interest': 0.0, 'pik_interest': 0.0, 'total_interest': 0.0,
+        'oid': 0.0, 'fees': 0.0, 'total_income': 0.0, 'prepayments': 0.0,
+    }
+
+    current_row = 3   # leave row 2 blank as spacer
+
+    # ── One block per investor ────────────────────────────────────────────────
+    for inv_idx, investor_id in enumerate(all_investor_ids):
+        investor_name = seen[investor_id]
+
+        # Investor heading
+        ws.cell(row=current_row, column=1, value=f"  {investor_name}  ({investor_id})").font = Font(bold=True, size=11)
+        ws.merge_cells(start_row=current_row, start_column=1,
+                       end_row=current_row, end_column=len(columns))
+        ws.row_dimensions[current_row].height = 18
+        current_row += 1
+
+        # Column header row
+        _write_header_row(current_row)
+        ws.row_dimensions[current_row].height = 30
+        current_row += 1
+
+        # ── Per-period data rows ──────────────────────────────────────────────
+        inv_totals = {
+            'cash_interest': 0.0, 'pik_interest': 0.0, 'total_interest': 0.0,
+            'oid': 0.0, 'fees': 0.0, 'total_income': 0.0, 'prepayments': 0.0,
+        }
+        cumul_interest = 0.0
+        cumul_oid      = 0.0
+        cumul_fees     = 0.0
+        cumul_total    = 0.0
+        first_beg_principal = None
+        last_end_principal  = None
+
+        for p_idx, (period, alloc) in enumerate(period_allocations):
+            if alloc is None:
+                continue
+
+            # Find this investor in the allocation
+            inv_data = next(
+                (i for i in alloc['investor_allocations'] if i['investor_id'] == investor_id),
+                None
+            )
+
+            # OID for this investor this period
+            period_oid_total = period.get('period_oid', 0.0)
+            oid_unamortized_start = period.get('oid_unamortized_start',
+                                               period.get('oid_unamortized_end', 0.0) + period_oid_total)
+            if has_oid and inv_data and period_oid_total > 0:
+                # Determine ownership ratio using last segment
+                last_seg = alloc['ownership_segments'][-1]
+                ownership_ratio = next(
+                    (i['ownership_pct'] / 100.0 for i in last_seg['investors']
+                     if i['investor_id'] == investor_id), 0.0
+                )
+                investor_oid = round(period_oid_total * ownership_ratio, 2)
+            else:
+                investor_oid = 0.0
+
+            # Fees for this investor this period
+            try:
+                fee_result = calculate_investor_fee_totals(loan_id, period['period_number'], investor_id)
+                investor_fees = fee_result['total_fees']
+            except Exception:
+                investor_fees = 0.0
+
+            # Values (zeros if investor not present this period)
+            if inv_data:
+                cash_int  = inv_data.get('cash_interest', inv_data['interest'])
+                pik_int   = inv_data.get('pik_interest', 0.0)
+                tot_int   = inv_data['interest']
+                beg_prin  = inv_data['principal_beginning']
+                end_prin  = inv_data['principal_ending']
+                prepay    = inv_data['principal_prepayment']
+
+                # Get period-end ownership %
+                last_seg  = alloc['ownership_segments'][-1]
+                ownership = next(
+                    (i['ownership_pct'] for i in last_seg['investors']
+                     if i['investor_id'] == investor_id), 0.0
+                )
+            else:
+                cash_int = pik_int = tot_int = beg_prin = end_prin = prepay = ownership = 0.0
+
+            total_income = tot_int + investor_oid + investor_fees
+
+            # Running cumulative
+            cumul_interest += tot_int
+            cumul_oid      += investor_oid
+            cumul_fees     += investor_fees
+            cumul_total    += total_income
+
+            # Track investor-level totals
+            inv_totals['cash_interest']  += cash_int
+            inv_totals['pik_interest']   += pik_int
+            inv_totals['total_interest'] += tot_int
+            inv_totals['oid']            += investor_oid
+            inv_totals['fees']           += investor_fees
+            inv_totals['total_income']   += total_income
+            inv_totals['prepayments']    += prepay
+
+            if first_beg_principal is None and beg_prin != 0:
+                first_beg_principal = beg_prin
+            if end_prin != 0:
+                last_end_principal = end_prin
+
+            # Alternate row shading
+            row_fill = alt_fill if p_idx % 2 == 0 else None
+
+            r = current_row
+            ws.cell(r, COL["Period"],            period['period_number'])
+            ws.cell(r, COL["Period Start"],      period['start_date'].strftime('%m/%d/%Y'))
+            ws.cell(r, COL["Period End"],        period['end_date'].strftime('%m/%d/%Y'))
+            ws.cell(r, COL["Ownership %"],       ownership / 100)
+            ws.cell(r, COL["Beg. Principal"],    beg_prin)
+            ws.cell(r, COL["Cash Interest"],     cash_int)
+            ws.cell(r, COL["PIK Interest"],      pik_int)
+            ws.cell(r, COL["Total Interest"],    tot_int)
+            ws.cell(r, COL["OID Accreted"],      investor_oid)
+            ws.cell(r, COL["Fee Income"],        investor_fees)
+            ws.cell(r, COL["Total Income"],      total_income)
+            ws.cell(r, COL["Principal Prepay"],  prepay)
+            ws.cell(r, COL["End. Principal"],    end_prin)
+            ws.cell(r, COL["Cumul. Interest"],   cumul_interest)
+            ws.cell(r, COL["Cumul. OID"],        cumul_oid)
+            ws.cell(r, COL["Cumul. Fees"],       cumul_fees)
+            ws.cell(r, COL["Cumul. Total Inc."], cumul_total)
+
+            # Formatting
+            _fmt_pct(r, COL["Ownership %"])
+            for col_label in ["Beg. Principal", "Cash Interest", "PIK Interest",
+                               "Total Interest", "OID Accreted", "Fee Income",
+                               "Total Income", "Principal Prepay", "End. Principal",
+                               "Cumul. Interest", "Cumul. OID", "Cumul. Fees",
+                               "Cumul. Total Inc."]:
+                _fmt_currency(r, COL[col_label])
+
+            if row_fill:
+                for col_idx in range(1, len(columns) + 1):
+                    ws.cell(r, col_idx).fill = row_fill
+
+            current_row += 1
+
+        # ── Investor subtotal row ─────────────────────────────────────────────
+        r = current_row
+        ws.cell(r, COL["Period"],            "TOTAL")
+        ws.cell(r, COL["Beg. Principal"],    first_beg_principal or 0.0)
+        ws.cell(r, COL["Cash Interest"],     inv_totals['cash_interest'])
+        ws.cell(r, COL["PIK Interest"],      inv_totals['pik_interest'])
+        ws.cell(r, COL["Total Interest"],    inv_totals['total_interest'])
+        ws.cell(r, COL["OID Accreted"],      inv_totals['oid'])
+        ws.cell(r, COL["Fee Income"],        inv_totals['fees'])
+        ws.cell(r, COL["Total Income"],      inv_totals['total_income'])
+        ws.cell(r, COL["Principal Prepay"],  inv_totals['prepayments'])
+        ws.cell(r, COL["End. Principal"],    last_end_principal or 0.0)
+
+        for col_idx in range(1, len(columns) + 1):
+            ws.cell(r, col_idx).font = sub_font
+            ws.cell(r, col_idx).fill = sub_fill
+
+        for col_label in ["Beg. Principal", "Cash Interest", "PIK Interest",
+                           "Total Interest", "OID Accreted", "Fee Income",
+                           "Total Income", "Principal Prepay", "End. Principal"]:
+            _fmt_currency(r, COL[col_label])
+
+        # Accumulate grand totals
+        for k in grand:
+            grand[k] += inv_totals.get(k, 0.0)
+
+        current_row += 3   # blank spacer between investors
+
+    # ── Grand Total block ─────────────────────────────────────────────────────
+    r = current_row
+    ws.cell(r, 1, "GRAND TOTAL — ALL INVESTORS").font = Font(bold=True, size=11, color="FFFFFF")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(columns))
+    for col_idx in range(1, len(columns) + 1):
+        ws.cell(r, col_idx).fill = grand_fill
+    ws.row_dimensions[r].height = 18
+    current_row += 1
+
+    r = current_row
+    labels = {
+        COL["Period"]:           "TOTAL",
+        COL["Cash Interest"]:    grand['cash_interest'],
+        COL["PIK Interest"]:     grand['pik_interest'],
+        COL["Total Interest"]:   grand['total_interest'],
+        COL["OID Accreted"]:     grand['oid'],
+        COL["Fee Income"]:       grand['fees'],
+        COL["Total Income"]:     grand['total_income'],
+        COL["Principal Prepay"]: grand['prepayments'],
+    }
+    for col_idx, value in labels.items():
+        c = ws.cell(r, col_idx, value)
+        c.font = grand_font
+        c.fill = grand_fill
+        if isinstance(value, float):
+            c.number_format = CURRENCY
+
+    # ── Column widths & freeze panes ─────────────────────────────────────────
+    _set_col_widths()
+    ws.freeze_panes = "B3"
 
 
 def _create_payment_ledger_tab(wb, loan_id):

@@ -35,6 +35,7 @@ def create_loan_command(args):
         interest_prepayment=args.interest_prepayment if args.interest_prepayment else 0.0,
         oid_amount=args.oid if args.oid else 0.0,
         closing_expenses=args.expenses if args.expenses else 0.0,
+        warrant_oid_amount=args.warrant_oid if getattr(args, 'warrant_oid', None) else 0.0,
     )
 
     # Save as draft — raises ValueError if loan_id already exists
@@ -154,6 +155,8 @@ def correct_loan_command(args):
                              else existing.interest_prepayment),
         oid_amount=(args.oid if args.oid is not None else existing.oid_amount),
         closing_expenses=(args.expenses if args.expenses is not None else existing.closing_expenses),
+        warrant_oid_amount=(args.warrant_oid if args.warrant_oid is not None
+                            else getattr(existing, 'warrant_oid_amount', 0.0)),
     )
     loan.created_at = existing.created_at
 
@@ -200,6 +203,7 @@ def recreate_draft_command(args):
         interest_prepayment=args.interest_prepayment or 0.0,
         oid_amount=args.oid or 0.0,
         closing_expenses=args.expenses or 0.0,
+        warrant_oid_amount=args.warrant_oid or 0.0,
     )
 
     try:
@@ -251,6 +255,35 @@ def amend_loan_command(args):
 
     existing = load_loan(args.loan_id)
 
+    # OID at origination is fixed for the life of the loan; the only way to
+    # *add* OID after activation is via --additional-oid, which is recorded
+    # as an amendment event (so historical periods keep their original OID).
+    new_maturity_date = (datetime.strptime(args.maturity_date, '%Y-%m-%d')
+                         if args.maturity_date else existing.maturity_date)
+    maturity_changed = new_maturity_date != existing.maturity_date
+    additional_oid = float(getattr(args, 'additional_oid', 0.0) or 0.0)
+
+    effective_date = None
+    if maturity_changed or additional_oid > 0:
+        if not args.effective_date:
+            print("\nError: --effective-date is required when --maturity-date "
+                  "changes or --additional-oid > 0.")
+            print("       This date drives the OID re-amortization split so "
+                  "historical periods keep their original OID and only the "
+                  "unamortized residual (+ any new OID) is re-amortized over "
+                  "remaining life.")
+            return
+        try:
+            effective_date = datetime.strptime(args.effective_date, '%Y-%m-%d')
+        except ValueError:
+            print(f"\nError: --effective-date must be YYYY-MM-DD (got '{args.effective_date}').")
+            return
+        if not (existing.origination_date <= effective_date <= new_maturity_date):
+            print(f"\nError: --effective-date ({effective_date.date()}) must fall between "
+                  f"origination ({existing.origination_date.date()}) and "
+                  f"new maturity ({new_maturity_date.date()}).")
+            return
+
     loan = Loan(
         loan_id=args.loan_id,
         borrower=args.borrower if args.borrower else existing.borrower,
@@ -259,8 +292,7 @@ def amend_loan_command(args):
         margin=(args.margin / 100) if args.margin is not None else existing.margin,
         origination_date=(datetime.strptime(args.origination_date, '%Y-%m-%d')
                           if args.origination_date else existing.origination_date),
-        maturity_date=(datetime.strptime(args.maturity_date, '%Y-%m-%d')
-                       if args.maturity_date else existing.maturity_date),
+        maturity_date=new_maturity_date,
         sofr_floor=((args.floor / 100) if args.floor is not None else existing.sofr_floor),
         sofr_ceiling=((args.ceiling / 100) if args.ceiling is not None else existing.sofr_ceiling),
         period_end_convention=args.convention if args.convention else existing.period_end_convention,
@@ -268,17 +300,45 @@ def amend_loan_command(args):
         interest_prepayment=(args.interest_prepayment
                              if args.interest_prepayment is not None
                              else existing.interest_prepayment),
-        oid_amount=(args.oid if args.oid is not None else existing.oid_amount),
+        # IMPORTANT: oid_amount and warrant_oid_amount are NOT amendable here.
+        # Additions go into oid_amendments.csv so the historical schedule is
+        # preserved.  Warrants are never re-issued post-origination.
+        oid_amount=existing.oid_amount,
         closing_expenses=(args.expenses if args.expenses is not None else existing.closing_expenses),
+        warrant_oid_amount=getattr(existing, 'warrant_oid_amount', 0.0),
     )
     loan.created_at = existing.created_at
     loan.activated_at = existing.activated_at
 
     try:
+        # Record the OID amendment event FIRST (it carries the snapshot of
+        # prior_maturity_date needed to replay the pre-amendment schedule).
+        if effective_date is not None:
+            from oid_amendments import record_oid_amendment
+            record_oid_amendment(
+                loan_id=args.loan_id,
+                effective_date=effective_date,
+                prior_maturity_date=existing.maturity_date,
+                new_maturity_date=new_maturity_date,
+                additional_oid=additional_oid,
+                reason=args.reason,
+                recorded_by=args.changed_by or '',
+            )
+
         amend_loan(loan, change_reason=args.reason, changed_by=args.changed_by or '')
         print(f"\n[ACTIVE] Loan '{args.loan_id}' amended (version {existing.version + 1}).")
         print(f"   Reason: {args.reason}")
         print(f"   Amendment recorded in loans_history.csv.")
+        if effective_date is not None:
+            print(f"   OID amendment event recorded in data/oid_amendments.csv:")
+            print(f"     Effective date     : {effective_date.date()}")
+            print(f"     Prior maturity     : {existing.maturity_date.date()}")
+            print(f"     New maturity       : {new_maturity_date.date()}")
+            if additional_oid > 0:
+                print(f"     Additional OID     : ${additional_oid:,.2f}")
+            print(f"   Pre-amendment periods retain their original OID; the "
+                  f"unamortized residual{' + additional OID' if additional_oid > 0 else ''} "
+                  f"will be re-amortized over the remaining periods.")
     except ValueError as e:
         print(f"\nError: {e}")
 
@@ -722,9 +782,11 @@ def generate_period_reports_command(args):
     print(f"   Loan version: {loan.version} (status: {loan.status})")
 
     text_files = generate_all_investor_statements_for_loan(
-        loan=loan, period_data=period_data, allocation_data=allocation)
+        loan=loan, period_data=period_data, allocation_data=allocation,
+        schedule=schedule)
     pdf_files = generate_all_investor_pdfs(
-        loan=loan, period_data=period_data, allocation_data=allocation)
+        loan=loan, period_data=period_data, allocation_data=allocation,
+        schedule=schedule)
 
     print(f"\nGenerated {len(text_files)} text reports and {len(pdf_files)} PDF reports.")
     print(f"   Text: {config.INVESTOR_REPORTS_DIR}")
@@ -801,9 +863,11 @@ def generate_all_period_reports_command(args):
               f"to {period_data['end_date'].strftime('%Y-%m-%d')}")
 
         text_files = generate_all_investor_statements_for_loan(
-            loan=loan, period_data=period_data, allocation_data=allocation)
+            loan=loan, period_data=period_data, allocation_data=allocation,
+            schedule=schedule)
         pdf_files = generate_all_investor_pdfs(
-            loan=loan, period_data=period_data, allocation_data=allocation)
+            loan=loan, period_data=period_data, allocation_data=allocation,
+            schedule=schedule)
 
         total_text += len(text_files)
         total_pdf += len(pdf_files)
@@ -1040,6 +1104,9 @@ def main():
                    help='Interest prepaid at loan close (in dollars)')
     p.add_argument('--oid', type=float, default=0.0,
                    help='Original Issue Discount at closing (in dollars)')
+    p.add_argument('--warrant-oid', type=float, default=0.0,
+                   help='Warrant OID at closing (in dollars). Set at origination only; '
+                        'never increased by amendments. Reported separately from cash OID.')
     p.add_argument('--expenses', type=float, default=0.0,
                    help='Closing expenses deducted from investor call before borrower wire (in dollars)')
     p.add_argument('--loan-name', help='Display name for loan (defaults to borrower name)')
@@ -1061,6 +1128,8 @@ def main():
     p.add_argument('--pik-rate', type=float)
     p.add_argument('--interest-prepayment', type=float)
     p.add_argument('--oid', type=float, help='OID amount (in dollars)')
+    p.add_argument('--warrant-oid', type=float,
+                   help='Warrant OID at closing (in dollars, drafts only)')
     p.add_argument('--expenses', type=float, help='Closing expenses (in dollars)')
     p.add_argument('--reason', default='', help='Reason (stored in audit trail)')
     p.add_argument('--changed-by', default='')
@@ -1082,6 +1151,8 @@ def main():
     p.add_argument('--pik-rate', type=float, default=0.0)
     p.add_argument('--interest-prepayment', type=float, default=0.0)
     p.add_argument('--oid', type=float, default=0.0, help='OID amount (in dollars)')
+    p.add_argument('--warrant-oid', type=float, default=0.0,
+                   help='Warrant OID at closing (in dollars)')
     p.add_argument('--expenses', type=float, default=0.0, help='Closing expenses (in dollars)')
     p.add_argument('--loan-name')
     p.add_argument('--reason', required=True, help='Reason this loan is being recreated')
@@ -1110,8 +1181,20 @@ def main():
     p.add_argument('--convention', choices=['last_business_day', 'calendar_month_end'])
     p.add_argument('--pik-rate', type=float)
     p.add_argument('--interest-prepayment', type=float)
-    p.add_argument('--oid', type=float, help='OID amount (in dollars)')
     p.add_argument('--expenses', type=float, help='Closing expenses (in dollars)')
+    # OID at origination is fixed; only ADDITIONAL OID (e.g. capitalized
+    # amendment fee) can be added via amendment, and it requires an
+    # --effective-date so the historical schedule is preserved.
+    p.add_argument('--additional-oid', type=float, default=0.0,
+        help='Capitalized OID added by this amendment (e.g. amendment fee '
+             'rolled into OID). Requires --effective-date. Combined with the '
+             'unamortized OID residual and re-amortized over remaining life.')
+    p.add_argument('--effective-date',
+        help='Amendment effective date (YYYY-MM-DD). Required when '
+             '--maturity-date changes or --additional-oid > 0. Used to '
+             'segment the OID schedule so pre-amendment periods keep their '
+             'original OID and the residual is re-amortized over the '
+             'remaining periods to the new maturity.')
     p.add_argument('--reason', required=True,
         help='Mandatory amendment reason (e.g. "Amendment No.1 - margin reduced per CA dated 2026-03-01")')
     p.add_argument('--changed-by', default='')

@@ -12,6 +12,9 @@ A comprehensive Python-based loan administration system for calculating interest
 - **Payment Tracking**: Record and track interest payments and principal prepayments with status monitoring
 - **PIK (Payment-In-Kind) Interest**: Support for capitalizing interest with configurable PIK rates
 - **OID (Original Issue Discount)**: Day-weighted straight-line amortization with full funding waterfall (net investor call, net borrower advance, closing expenses)
+- **Warrant OID**: A separate OID tranche attributable to warrants issued at closing — amortized like cash OID but reported separately and never increased by amendments
+- **OID Amendments**: Maturity extensions and capitalized amendment fees (additional OID) re-amortize the unamortized residual over the remaining life while preserving the OID already recognized in historical periods (`oid_amendments.py`)
+- **Loan Lifecycle & Versioning**: Every loan moves through `draft → active → closed` with version bumps and an append-only audit trail recording each change (created, corrected, recreated, activated, amended, closed)
 - **Loan Persistence**: CSV-backed loan storage with append-only audit history (`loan_storage.py`)
 
 ### Investor Management (v1.4)
@@ -72,7 +75,8 @@ LoanAdministration/
 ├── payments.py                    # Payment recording and tracking
 ├── loan_export.py                 # Export functionality (CSV, text)
 ├── loan_storage.py                # Loan persistence (loans.csv + audit history)
-├── oid_calculations.py            # OID amortization and funding waterfall
+├── oid_calculations.py            # OID amortization (incl. amendment-aware) and funding waterfall
+├── oid_amendments.py              # OID amendment events (maturity extension / additional OID)
 
 # Investor System (v1.4)
 ├── investors.py                   # Investor ownership tracking
@@ -97,6 +101,7 @@ LoanAdministration/
 ├── test_fees_on_reports.py        # Fee reporting integration tests
 ├── test_investor_system.py        # Investor allocation tests
 ├── test_naming_and_columns.py     # Report naming and column tests
+├── test_oid_amendment.py          # Amendment-aware OID / warrant OID tests
 ├── test_pdf_simple.py             # PDF generation tests
 ├── demo_investor_workflow.sh      # Complete workflow demonstration
 
@@ -109,6 +114,7 @@ LoanAdministration/
 │   ├── fees.csv                   # Fee records (gitignored)
 │   ├── loans.csv                  # Current loan state (gitignored)
 │   ├── loans_history.csv          # Append-only loan audit trail (gitignored)
+│   ├── oid_amendments.csv         # OID amendment events, created on first amendment (gitignored)
 │   └── *_template.csv             # Template files (tracked in git)
 
 # Generated Reports
@@ -168,12 +174,12 @@ COMPANY_ADDRESS_LINE1 = "123 Main Street"
 COMPANY_CITY_STATE_ZIP = "New York, NY 10001"
 ```
 
-2. Add SOFR rates to `data/sofr_rates.csv`:
+2. Add SOFR rates to `data/sofr_rates.csv` (or use `python cli.py add-rate`). The file uses CME Term SOFR columns, with rates stored as decimals:
 ```csv
-date,rate
-2025-01-30,0.0455
-2025-02-27,0.0460
-2025-03-28,0.0465
+reset_date,term_sofr_1m,source,date_added
+2025-01-30,0.04550,CME,2025-01-30
+2025-02-27,0.04600,CME,2025-02-27
+2025-03-28,0.04650,CME,2025-03-28
 ```
 
 3. Test the installation:
@@ -201,6 +207,8 @@ python cli.py add-rate 2025-01-30 4.55
 
 ### 2. Creating a Loan
 
+A loan is created as a **draft** (version 1). Draft terms can be corrected freely; once you `activate-loan`, terms are locked and any further change must go through `amend-loan` (see [Loan Lifecycle](#3-loan-lifecycle) below).
+
 **Basic loan (interest-only):**
 ```bash
 python cli.py create \
@@ -223,37 +231,87 @@ python cli.py create \
   --margin 2.5 \
   --origination-date 2025-01-15 \
   --maturity-date 2025-12-31 \
-  --oid-amount 50000 \
-  --closing-expenses 15000 \
+  --oid 50000 \
+  --warrant-oid 10000 \
+  --expenses 15000 \
   --interest-prepayment 20000
 ```
 
-**Parameters:**
+**Required parameters:**
 - `--loan-id`: Unique identifier (e.g., LOAN-001)
 - `--borrower`: Legal entity name
-- `--loan-name`: Short display name for reports (defaults to borrower)
 - `--principal`: Loan amount in dollars
-- `--margin`: Spread over SOFR in basis points (e.g., 2.5 for 2.50%)
+- `--margin`: Spread over SOFR in percent (e.g., `2.5` for 2.50%)
 - `--origination-date`: Loan start date (YYYY-MM-DD)
 - `--maturity-date`: Loan end date (YYYY-MM-DD)
 
 **Optional parameters:**
-- `--floor`: SOFR floor (default: 0)
-- `--ceiling`: SOFR ceiling (default: none)
-- `--pik-rate`: PIK interest rate
-- `--interest-prepayment`: Upfront interest prepayment amount
-- `--oid-amount`: Original Issue Discount amount
-- `--closing-expenses`: Closing expenses deducted from borrower advance
-- `--period-end-convention`: `last_business_day` (default) or `calendar_month_end`
+- `--loan-name`: Short display name for reports (defaults to borrower)
+- `--floor`: SOFR floor in percent (default: 0)
+- `--ceiling`: SOFR ceiling in percent (default: none)
+- `--pik-rate`: PIK interest rate in percent
+- `--interest-prepayment`: Upfront interest prepayment amount (dollars)
+- `--oid`: Original Issue Discount at closing (dollars)
+- `--warrant-oid`: Warrant OID at closing (dollars) — amortized separately, never increased by amendments
+- `--expenses`: Closing expenses deducted from the investor call before the borrower wire (dollars)
+- `--convention`: `last_business_day` (default) or `calendar_month_end`
 
-### 3. Adding Investors
+### 3. Loan Lifecycle
 
-**Add initial investors:**
+Loans progress through `draft → active → closed`. Every change is written to an append-only audit trail (`data/loans_history.csv`).
+
+**Correct a draft** (drafts only; bumps version):
+```bash
+python cli.py correct-loan --loan-id LOAN-001 --margin 2.75 --reason "Typo in rate sheet"
+```
+
+**Recreate a draft from scratch** (resets to version 1):
+```bash
+python cli.py recreate-draft --loan-id LOAN-001 --borrower "ABC Company LLC" \
+  --principal 5000000 --margin 2.5 --origination-date 2025-01-15 \
+  --maturity-date 2025-12-31 --reason "Restructured terms before funding"
+```
+
+**Activate a loan** (draft → active; terms become locked):
+```bash
+python cli.py activate-loan --loan-id LOAN-001
+```
+
+**Amend an active loan** (`--reason` is mandatory and permanently logged):
+```bash
+# Maturity extension that also capitalizes a $25,000 amendment fee as new OID.
+# --effective-date splits the OID schedule so periods before the amendment keep
+# their original OID, and the unamortized residual + additional OID re-amortize
+# over the remaining periods to the new maturity.
+python cli.py amend-loan \
+  --loan-id LOAN-001 \
+  --maturity-date 2026-06-30 \
+  --additional-oid 25000 \
+  --effective-date 2025-12-31 \
+  --reason "Amendment No.1 - 6-month extension + fee per CA dated 2025-12-31"
+```
+`--effective-date` is required whenever `--maturity-date` changes or `--additional-oid > 0`. OID and warrant OID set at origination are **not** otherwise amendable.
+
+**Close a loan** (fully repaid):
+```bash
+python cli.py close-loan --loan-id LOAN-001 --reason "Repaid in full"
+```
+
+**Inspect loans and history:**
+```bash
+python cli.py list-loans                 # all loans with status and version
+python cli.py loan-history LOAN-001       # full audit trail for one loan
+```
+
+### 4. Adding Investors
+
+**Add initial investors** (`--investor-short-name` is required and used as the display label in reports/filenames):
 ```bash
 python cli.py add-investor \
   --loan-id LOAN-001 \
   --investor-id INV-A \
   --investor-name "Investor A LLC" \
+  --investor-short-name "Investor A" \
   --ownership-pct 40.0 \
   --effective-date 2025-01-15
 
@@ -261,6 +319,7 @@ python cli.py add-investor \
   --loan-id LOAN-001 \
   --investor-id INV-B \
   --investor-name "Investor B Fund" \
+  --investor-short-name "Investor B" \
   --ownership-pct 60.0 \
   --effective-date 2025-01-15
 ```
@@ -272,6 +331,7 @@ python cli.py add-investor \
   --loan-id LOAN-001 \
   --investor-id INV-A \
   --investor-name "Investor A LLC" \
+  --investor-short-name "Investor A" \
   --ownership-pct 30.0 \
   --effective-date 2025-06-15
 
@@ -279,6 +339,7 @@ python cli.py add-investor \
   --loan-id LOAN-001 \
   --investor-id INV-C \
   --investor-name "Investor C Capital" \
+  --investor-short-name "Investor C" \
   --ownership-pct 10.0 \
   --effective-date 2025-06-15
 ```
@@ -289,15 +350,16 @@ python cli.py list-investors LOAN-001
 python cli.py list-investors LOAN-001 --date 2025-06-30  # As of specific date
 ```
 
-### 4. Recording Payments
+### 5. Recording Payments
 
-**Interest payment:**
+**Interest payment** (use `--period` to tie it to an interest period):
 ```bash
 python cli.py add-payment \
   --loan-id LOAN-001 \
   --date 2025-01-31 \
   --amount 16250.00 \
-  --type interest_payment \
+  --type interest \
+  --period 1 \
   --notes "Period 1 interest"
 ```
 
@@ -311,12 +373,14 @@ python cli.py add-payment \
   --notes "Voluntary prepayment"
 ```
 
+`--type` accepts `interest` or `principal_prepayment`.
+
 **View payment history:**
 ```bash
 python cli.py list-payments LOAN-001
 ```
 
-### 5. Managing Fees
+### 6. Managing Fees
 
 **Add a fee:**
 ```bash
@@ -348,85 +412,73 @@ python cli.py add-fee \
 python cli.py list-fees LOAN-001
 ```
 
-### 6. Generating Investor Reports
+### 7. Generating Investor Reports
 
-**Generate investor distribution statements (PDF):**
-```python
-from datetime import datetime
-from loan import Loan
-from investor_allocation import allocate_period_to_investors
-from investor_reports_pdf import generate_all_investor_pdfs
-from sofr_rates import load_sofr_rates
+Report generation is driven entirely from the CLI. Reports can only be generated for periods that have a SOFR rate on file.
 
-loan = Loan(
-    loan_id="LOAN-001",
-    borrower="ABC Company LLC",
-    loan_name="ABC",
-    principal=5000000,
-    margin=0.025,
-    origination_date=datetime(2025, 1, 15),
-    maturity_date=datetime(2025, 12, 31)
-)
-
-sofr_rates = load_sofr_rates()
-schedule = loan.calculate_schedule(sofr_rates=sofr_rates)
-
-period_number = 2
-allocation = allocate_period_to_investors("LOAN-001", schedule[period_number - 1])
-
-pdf_files = generate_all_investor_pdfs(
-    loan=loan,
-    period_data=schedule[period_number - 1],
-    allocation_data=allocation
-)
-print(f"Generated {len(pdf_files)} investor reports")
+**Check which periods are ready:**
+```bash
+python cli.py check-periods LOAN-001
 ```
 
-Output: `output/investor_reports_pdf/LOAN-001_Period2_INV-A.pdf`
+**Export the full interest schedule (CSV + text):**
+```bash
+python cli.py generate-schedule --loan-id LOAN-001
+```
 
-### 7. Generating Distribution Notices
+**Generate investor statements (text + PDF) for one period:**
+```bash
+python cli.py generate-period-reports --loan-id LOAN-001 --period 2
+# add --force to overwrite existing reports
+```
 
-Distribution notices document cash activity outside the normal month-end statement cycle.
+**Batch-generate reports for every period with a rate:**
+```bash
+python cli.py generate-all-period-reports --loan-id LOAN-001
+# optionally scope with --start-period / --end-period
+```
+
+**Generate the Excel audit report:**
+```bash
+python cli.py generate-audit-report --loan-id LOAN-001
+```
+
+Output: `output/investor_reports_pdf/ABC_Period2_InvestorA.pdf` (filenames use the loan name and each investor's short name).
+
+### 8. Generating Distribution Notices
+
+Distribution notices document cash activity outside the normal month-end statement cycle. The total amount is allocated to investors by ownership as of the effective date, and both text and PDF notices are produced.
 
 - **Interim**: Mid-period wire sent before the period closes
 - **Supplemental**: Post-statement event after period reports are already issued
 
-```python
-from datetime import datetime
-from distribution_notices import allocate_notice_to_investors, generate_all_notices
-from distribution_notices_pdf import generate_all_notice_pdfs
-
-effective_date = datetime(2025, 3, 15)
-allocations = allocate_notice_to_investors("LOAN-001", effective_date, total_amount=50000.00)
-
-# Text notices
-generate_all_notices(
-    loan_name="ABC",
-    period_number=2,
-    period_start=datetime(2025, 3, 1),
-    period_end=datetime(2025, 3, 31),
-    notice_type="interim",
-    allocations=allocations,
-    effective_date=effective_date,
-    description="Interim interest distribution"
-)
-
-# PDF notices
-generate_all_notice_pdfs(
-    loan_name="ABC",
-    period_number=2,
-    period_start=datetime(2025, 3, 1),
-    period_end=datetime(2025, 3, 31),
-    notice_type="interim",
-    allocations=allocations,
-    effective_date=effective_date,
-    description="Interim interest distribution"
-)
+**Interim notice (mid-period wire):**
+```bash
+python cli.py generate-distribution-notice \
+  --loan-id LOAN-001 \
+  --period 2 \
+  --type interim \
+  --effective-date 2025-03-15 \
+  --amount 50000.00 \
+  --description "Interim interest distribution" \
+  --wire-ref "WIRE-20250315-001"
 ```
 
-Output: `output/distribution_notices_pdf/ABC_Period2_Interim_2025-03-15_INV-A.pdf`
+**Supplemental notice (after the period statement was issued):**
+```bash
+python cli.py generate-distribution-notice \
+  --loan-id LOAN-001 \
+  --period 2 \
+  --type supplemental \
+  --effective-date 2025-04-10 \
+  --amount 4000.00 \
+  --description "Amendment Fee - Amendment No. 1" \
+  --original-statement-date 2025-04-01
+```
 
-### 8. Complete Monthly Workflow
+Output: `output/distribution_notices_pdf/ABC_Period2_Interim_2025-03-15_InvestorA.pdf`
+
+### 9. Complete Monthly Workflow
 
 **Run the demo workflow:**
 ```bash
@@ -470,6 +522,18 @@ OID amortization (day-weighted straight-line):
   period_oid = OID × (period_days / total_loan_days)
   Last period absorbs any penny-rounding residual
 ```
+
+**Warrant OID** is a separate tranche amortized with the same day-weighted method and reported on its own line. It is fixed at origination and is never increased by amendments (warrants are not re-issued post-closing).
+
+### OID Amendments (segmented re-amortization)
+
+When a loan is amended with a maturity extension and/or capitalized OID, the historical periods must keep the OID they already recognized — re-running the whole schedule against the new maturity would wrongly shrink prior periods. Instead, the schedule is **segmented** by amendment effective date:
+
+1. Periods before the amendment keep their original OID.
+2. The unamortized residual at the effective date, plus any `--additional-oid`, is re-amortized day-weighted over the remaining periods to the new maturity.
+3. The final period absorbs penny-rounding so the lifetime total still equals `original OID + Σ additions` exactly.
+
+Amendment events are recorded in `data/oid_amendments.csv`, capturing the prior maturity (to replay the pre-amendment horizon), the new maturity, and the additional OID.
 
 ### Investor Allocation with Ownership Changes
 
@@ -572,6 +636,7 @@ python test_audit_report.py
 python test_fee_allocation.py
 python test_fees_on_reports.py
 python test_naming_and_columns.py
+python test_oid_amendment.py
 python test_pdf_simple.py
 ```
 
@@ -604,15 +669,22 @@ This system addresses real-world challenges in private credit fund operations:
 5. **Audit Trail**: Maintains complete history of rates, payments, and ownership
 6. **Month-End Close**: Streamlines period-end reporting workflow
 7. **Distribution Notices**: Documents interim and supplemental cash distributions
-8. **OID Accounting**: Tracks and amortizes original issue discount per loan period
+8. **OID Accounting**: Tracks and amortizes original issue discount (incl. warrant OID and amendment-driven re-amortization) per loan period
 9. **Regulatory Compliance**: Provides documentation for auditors and regulators
 
 ## Roadmap
 
-### ✅ v1.6 (Current Release)
-- [x] Distribution notices — Interim and Supplemental (text + PDF)
+### ✅ v1.7 (Current Release)
+- [x] Warrant OID as a separate, independently-reported tranche
+- [x] OID amendments — maturity extensions and capitalized fees with segmented re-amortization that preserves historical periods (`oid_amendments.py`)
+- [x] SOFR floor/ceiling surfaced in the schedule output and investor/audit reports
+
+### ✅ v1.6
+- [x] Distribution notices — Interim and Supplemental (text + PDF), via CLI
 - [x] OID (Original Issue Discount) amortization with funding waterfall
 - [x] Loan persistence (`loan_storage.py`) with append-only audit history
+- [x] Loan lifecycle CLI — draft → active → closed with versioning, corrections, amendments
+- [x] Automated report generation via CLI (`generate-period-reports`, `generate-all-period-reports`, `generate-audit-report`)
 - [x] Period end convention option (last business day vs. calendar month end)
 - [x] Rate precision diagnostic tool (`diagnose_rates.py`)
 
@@ -627,7 +699,6 @@ This system addresses real-world challenges in private credit fund operations:
 - [x] PDF investor statements and Excel audit reports
 
 ### Future Enhancements
-- [ ] Automated PDF generation via CLI
 - [ ] PIK fee capitalization
 - [ ] Email distribution integration
 - [ ] Prepayment penalties and make-whole calculations
@@ -639,7 +710,8 @@ This system addresses real-world challenges in private credit fund operations:
 
 ## Version History
 
-- **v1.6** (May 2026): Distribution notices, OID amortization, loan persistence, rate diagnostics
+- **v1.7** (May 2026): Warrant OID tranche, OID amendments with segmented re-amortization, SOFR floor/ceiling in reports
+- **v1.6** (May 2026): Distribution notices, OID amortization, loan persistence, loan lifecycle CLI, rate diagnostics
 - **v1.5** (Feb 2026): Fee management system
 - **v1.4** (Jan 2026): Investor management, allocation engine, PDF reports
 - **v1.3** (Jan 2026): Payment tracking, principal prepayments

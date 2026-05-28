@@ -24,10 +24,11 @@ class Loan:
         loan_name: str = None,
         oid_amount: float = 0.0,
         closing_expenses: float = 0.0,
+        warrant_oid_amount: float = 0.0,
     ):
         """
         Initialize a loan.
-        
+
         Args:
             loan_id: Unique identifier for the loan
             borrower: Borrower name
@@ -43,6 +44,9 @@ class Loan:
             loan_name: Display name for loan (defaults to borrower if not provided)
             oid_amount: Original Issue Discount at closing (default 0)
             closing_expenses: Closing costs deducted from investor call before wiring to borrower (default 0)
+            warrant_oid_amount: OID attributable to warrants issued at closing (default 0).
+                                Amortized like cash OID, but reported separately and never
+                                increased by amendments (warrants are not re-issued at amendment).
         """
         self.loan_id = loan_id
         self.borrower = borrower
@@ -58,6 +62,7 @@ class Loan:
         self.loan_name = loan_name if loan_name else borrower
         self.oid_amount = oid_amount
         self.closing_expenses = closing_expenses
+        self.warrant_oid_amount = warrant_oid_amount
         
         # Generate holidays once
         self.holidays = self._get_relevant_holidays()
@@ -133,10 +138,46 @@ class Loan:
             from sofr_rates import load_sofr_rates
             sofr_rates = load_sofr_rates(sofr_filepath)
 
-        # Build OID amortization schedule (zero array when no OID)
-        from oid_calculations import build_oid_schedule
-        oid_schedule = build_oid_schedule(self.oid_amount, self.periods)
-        cumulative_oid = 0.0  # Running total of OID recognized
+        # Build OID amortization schedules — segmented by amendment events so
+        # historical (pre-amendment) periods keep their original OID and the
+        # residual + any newly-added OID is re-amortized over remaining life.
+        from oid_calculations import build_oid_schedule_with_amendments
+        from oid_amendments import load_oid_amendments
+
+        oid_amendments_events = load_oid_amendments(self.loan_id)
+
+        oid_schedule = build_oid_schedule_with_amendments(
+            periods=self.periods,
+            origination_date=self.origination_date,
+            current_maturity_date=self.maturity_date,
+            base_amount=self.oid_amount,
+            amendments=oid_amendments_events,
+            additional_key="additional_oid",
+        )
+        warrant_oid_schedule = build_oid_schedule_with_amendments(
+            periods=self.periods,
+            origination_date=self.origination_date,
+            current_maturity_date=self.maturity_date,
+            base_amount=getattr(self, "warrant_oid_amount", 0.0),
+            amendments=oid_amendments_events,
+            additional_key=None,  # warrants are NOT increased at amendment
+        )
+
+        # Running unamortized balances — tracked independently because the
+        # total amortized amount grows when an amendment adds OID, so the old
+        # "self.oid_amount - cumulative" identity no longer holds.
+        oid_unamortized_running = float(self.oid_amount)
+        warrant_oid_unamortized_running = float(
+            getattr(self, "warrant_oid_amount", 0.0)
+        )
+        # Pop additions onto the running balance when we cross their
+        # effective_date.  We pre-sort and iterate so an amendment is credited
+        # to the period whose start_date == effective_date (the first period
+        # of the new segment).
+        pending_oid_additions = [
+            (a["effective_date"], float(a.get("additional_oid") or 0))
+            for a in oid_amendments_events
+        ]
 
         # Determine if PIK loan
         is_pik_loan = self.pik_rate > 0
@@ -254,11 +295,34 @@ class Loan:
             # Calculate final cash due — all components already penny-rounded
             cash_due = round(interest_owed - prepaid_applied - pik_amount, 2)
 
-            # OID amortization for this period
-            period_oid = oid_schedule[period_num - 1]  # period_num is 1-indexed
-            oid_unamortized_start = round(self.oid_amount - cumulative_oid, 2)
-            oid_unamortized_end   = round(oid_unamortized_start - period_oid, 2)
-            cumulative_oid = round(cumulative_oid + period_oid, 2)
+            # OID amortization for this period (segmented over amendments)
+            period_oid         = oid_schedule[period_num - 1]          # cash OID, 1-indexed
+            period_warrant_oid = warrant_oid_schedule[period_num - 1]  # warrant OID
+
+            # Credit any amendment additions whose effective_date falls
+            # on/within this period (typically equal to period['start_date'])
+            additions_this_period = 0.0
+            still_pending = []
+            for eff, add_amt in pending_oid_additions:
+                if eff <= period['end_date']:
+                    additions_this_period = round(additions_this_period + add_amt, 2)
+                else:
+                    still_pending.append((eff, add_amt))
+            pending_oid_additions = still_pending
+
+            # Cash OID: starting balance gets bumped by any addition that took
+            # effect inside this period BEFORE we recognize the period's amort.
+            oid_unamortized_running = round(oid_unamortized_running + additions_this_period, 2)
+            oid_unamortized_start   = oid_unamortized_running
+            oid_unamortized_end     = round(oid_unamortized_running - period_oid, 2)
+            oid_unamortized_running = oid_unamortized_end
+
+            # Warrant OID: no additions, just amortize the residual.
+            warrant_oid_unamortized_start = warrant_oid_unamortized_running
+            warrant_oid_unamortized_end   = round(
+                warrant_oid_unamortized_running - period_warrant_oid, 2
+            )
+            warrant_oid_unamortized_running = warrant_oid_unamortized_end
 
             # Build schedule entry
             schedule_entry = {
@@ -267,6 +331,8 @@ class Loan:
                 'sofr_reset_date': sofr_reset_date,
                 'sofr_rate': sofr_rate,
                 'margin': self.margin,
+                'sofr_floor': self.sofr_floor,
+                'sofr_ceiling': self.sofr_ceiling,
                 'effective_rate': effective_rate,
                 'interest_owed': interest_owed,
                 'prepaid_balance_start': prepaid_balance_start,
@@ -280,6 +346,9 @@ class Loan:
                 'period_oid': period_oid,
                 'oid_unamortized_start': oid_unamortized_start,
                 'oid_unamortized_end': oid_unamortized_end,
+                'period_warrant_oid': period_warrant_oid,
+                'warrant_oid_unamortized_start': warrant_oid_unamortized_start,
+                'warrant_oid_unamortized_end': warrant_oid_unamortized_end,
                 'segments': segments,
                 'prepayments': period_prepayments
             }

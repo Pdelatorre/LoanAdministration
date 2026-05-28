@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List, Optional
 import os
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -17,7 +17,8 @@ def generate_investor_statement_pdf(
     allocation_data: Dict,
     investor_id: str,
     output_path: str,
-    company_name: str = None
+    company_name: str = None,
+    cumulative_data: Optional[Dict] = None,
 ) -> str:
     """
     Generate PDF investor distribution statement using reportlab.
@@ -136,7 +137,60 @@ def generate_investor_statement_pdf(
     """
     elements.append(Paragraph(loan_info, normal_style))
     elements.append(Spacer(1, 0.2*inch))
-    
+
+    # Period Terms Section (rate disclosure)
+    sofr_reset_date = period_data.get('sofr_reset_date')
+    sofr_rate       = period_data.get('sofr_rate', 0.0) or 0.0
+    margin          = period_data.get('margin', 0.0) or 0.0
+    effective_rate  = period_data.get('effective_rate', 0.0) or 0.0
+    sofr_floor      = period_data.get('sofr_floor', 0.0) or 0.0
+    sofr_ceiling    = period_data.get('sofr_ceiling')
+    days_in_period  = period_data.get('days', 0)
+
+    reset_str   = sofr_reset_date.strftime('%m/%d/%Y') if sofr_reset_date else 'N/A'
+    has_floor   = sofr_floor and sofr_floor > 0
+    has_ceiling = sofr_ceiling is not None and sofr_ceiling != float('inf')
+
+    elements.append(Paragraph("PERIOD TERMS", heading_style))
+    terms_left = [
+        ['SOFR Reset Date:', reset_str],
+        ['SOFR Rate:',       f"{sofr_rate * 100:.4f}%"],
+        ['Effective Rate:',  f"{effective_rate * 100:.4f}%"],
+    ]
+    if has_floor:
+        terms_left.append(['SOFR Floor:', f"{sofr_floor * 100:.4f}%"])
+    terms_right = [
+        ['Margin:',          f"{margin * 100:.4f}%"],
+        ['Day-Count:',       'Actual/360'],
+        ['Days in Period:',  str(days_in_period)],
+    ]
+    if has_ceiling:
+        terms_right.append(['SOFR Ceiling:', f"{sofr_ceiling * 100:.4f}%"])
+
+    # Pad shorter column so the two render as parallel rows
+    while len(terms_left) < len(terms_right):
+        terms_left.append(['', ''])
+    while len(terms_right) < len(terms_left):
+        terms_right.append(['', ''])
+
+    terms_rows = [
+        [terms_left[i][0], terms_left[i][1], terms_right[i][0], terms_right[i][1]]
+        for i in range(len(terms_left))
+    ]
+    terms_table = Table(terms_rows, colWidths=[1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+    terms_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+        ('ALIGN', (3, 0), (3, -1), 'LEFT'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(terms_table)
+    elements.append(Spacer(1, 0.2*inch))
+
     # Total Loan Activity Section
     elements.append(Paragraph("TOTAL LOAN ACTIVITY", heading_style))
     
@@ -357,6 +411,48 @@ def generate_investor_statement_pdf(
 
     elements.append(summary_table)
 
+    # Cumulative Totals — only when caller provides the data
+    if cumulative_data:
+        inc = cumulative_data['inception']
+        ytd = cumulative_data['ytd']
+        ytd_year = cumulative_data['ytd_year']
+
+        elements.append(Spacer(1, 0.25 * inch))
+        elements.append(Paragraph("CUMULATIVE TOTALS", heading_style))
+
+        cumul_rows = [
+            ['', 'Inception-to-Date', f'Calendar YTD {ytd_year}'],
+            ['Cash Interest',      f"${inc['cash_interest']:,.2f}",      f"${ytd['cash_interest']:,.2f}"],
+            ['PIK Interest',       f"${inc['pik_interest']:,.2f}",       f"${ytd['pik_interest']:,.2f}"],
+            ['Total Interest',     f"${inc['total_interest']:,.2f}",     f"${ytd['total_interest']:,.2f}"],
+            ['OID Amortized',      f"${inc['oid']:,.2f}",                f"${ytd['oid']:,.2f}"],
+            ['Fee Income',         f"${inc['fees']:,.2f}",               f"${ytd['fees']:,.2f}"],
+            ['Total Income',       f"${inc['total_income']:,.2f}",       f"${ytd['total_income']:,.2f}"],
+            ['Principal Returned', f"${inc['principal_returned']:,.2f}", f"${ytd['principal_returned']:,.2f}"],
+        ]
+        cumul_table = Table(cumul_rows, colWidths=[2.5 * inch, 2.0 * inch, 2.0 * inch])
+        cumul_table.setStyle(TableStyle([
+            # Header
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('ALIGN', (1, 0), (-1, 0), 'RIGHT'),
+            ('LINEBELOW', (0, 0), (-1, 0), 1, colors.black),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('TOPPADDING', (0, 0), (-1, 0), 6),
+            # Body
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
+            ('TOPPADDING', (0, 1), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
+            # Bold the Total Interest (row 3) and Total Income (row 6) subtotals
+            ('FONTNAME', (0, 3), (-1, 3), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 6), (-1, 6), 'Helvetica-Bold'),
+            ('LINEABOVE', (1, 3), (-1, 3), 0.5, colors.black),
+            ('LINEABOVE', (1, 6), (-1, 6), 0.5, colors.black),
+        ]))
+        elements.append(cumul_table)
+
     # Build PDF
     doc.build(elements)
 
@@ -368,7 +464,8 @@ def generate_all_investor_pdfs(
     period_data: Dict,
     allocation_data: Dict,
     output_dir: str = None,
-    company_name: str = None
+    company_name: str = None,
+    schedule: Optional[List[Dict]] = None,
 ) -> list:
     """
     Generate PDF statements for all investors.
@@ -400,6 +497,17 @@ def generate_all_investor_pdfs(
         filename = f"{loan.loan_name}_Period{period_num}_{investor_short}.pdf"
         filepath = os.path.join(output_dir, filename)
 
+        # Pre-compute cumulative for this investor if schedule available
+        cumulative_data = None
+        if schedule is not None:
+            from investor_reports import _compute_cumulative_for_investor
+            cumulative_data = _compute_cumulative_for_investor(
+                loan_id=loan.loan_id,
+                schedule=schedule,
+                current_period_num=allocation_data['period_number'],
+                investor_id=investor['investor_id'],
+            )
+
         generate_investor_statement_pdf(
             loan_id=loan.loan_id,
             loan_name=loan.loan_name,
@@ -407,7 +515,8 @@ def generate_all_investor_pdfs(
             allocation_data=allocation_data,
             investor_id=investor['investor_id'],
             output_path=filepath,
-            company_name=company_name
+            company_name=company_name,
+            cumulative_data=cumulative_data,
         )
 
         filepaths.append(filepath)
